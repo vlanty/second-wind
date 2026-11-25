@@ -45,7 +45,9 @@ class BigQueryModelWriter:
     def _load(self, table_name: str, rows: list[dict], disposition: str) -> tuple[str, list[str]]:
         target = self.client.get_table(self.table(table_name))
         cols = [f.name for f in target.schema]
-        rows = [{c: r.get(c) for c in cols} for r in rows]
+        # Leave absent values out: a None in a JSON column loads as JSON null, which the MERGE's
+        # COALESCE treats as a value and would overwrite what is stored (e.g. sessions.attrs.fit_ref).
+        rows = [{c: r[c] for c in cols if r.get(c) is not None} for r in rows]
         stage = self.table(f"_stage_{table_name}_{uuid.uuid4().hex[:8]}")
         cfg = bigquery.LoadJobConfig(write_disposition=disposition, schema=target.schema)
         self.client.load_table_from_json(rows, stage, job_config=cfg).result()
