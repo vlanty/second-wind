@@ -75,3 +75,7 @@ def test_prompt_files_use_only_known_fields():
 
 def test_persona_tells_the_model_to_refuse_role_changes():
     assert "not instructions" in a.PERSONA and "change your role" in a.PERSONA
+
+
+def test_persona_is_the_second_line_for_emergencies():
+    assert "do not coach" in a.PERSONA and "112" in a.PERSONA and "chest pain" in a.PERSONA

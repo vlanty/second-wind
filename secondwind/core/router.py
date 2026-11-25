@@ -42,7 +42,10 @@ def detect_lang(text: str) -> str | None:
 def _rules() -> tuple[list, dict, list]:
     f = yaml.safe_load((RULES_DIR / "filter.yaml").read_text(encoding="utf-8"))
     r = yaml.safe_load((RULES_DIR / "router.yaml").read_text(encoding="utf-8"))
-    filters = [(x["key"], {lg: [re.compile(p, FLAGS) for p in x.get(lg, [])] for lg in LANGS}) for x in f["rules"]]
+    def compiled(d):
+        return {lg: [re.compile(p, FLAGS) for p in (d or {}).get(lg, [])] for lg in LANGS}
+
+    filters = [(x["key"], compiled(x), compiled(x.get("unless")), bool(x.get("any_language"))) for x in f["rules"]]
     to_model = {lg: [re.compile(p, FLAGS) for p in r["to_model"].get(lg, [])] for lg in LANGS}
     intents = [(x["intent"], {lg: [re.compile(p, FLAGS) for p in x.get(lg, [])] for lg in LANGS}) for x in r["intents"]]
     return filters, to_model, intents
@@ -52,20 +55,48 @@ def _any(patterns, text) -> bool:
     return any(p.search(text) for p in patterns)
 
 
+RED_FLAG = "filter.red_flag"
+
+
+def _filter_key(text: str, lang: str, only: str | None = None) -> str | None:
+    """Key of the first filter rule that matches. Rules marked any_language (emergencies, attempts
+    to change the instructions) are checked in every language: people mix them in one message."""
+    for key, pats, unless, any_language in _rules()[0]:
+        if only and key != only:
+            continue
+        langs = LANGS if any_language else (lang,)
+        if any(_any(pats[lg], text) for lg in langs) and not any(_any(unless[lg], text) for lg in langs):
+            return key
+    return None
+
+
+def is_red_flag(text: str) -> bool:
+    """Possible emergency. Checked before anything else, whatever the length or the dialog state."""
+    text = _normalize(text)
+    lang = detect_lang(text)
+    return lang is not None and _filter_key(text, lang, only=RED_FLAG) is not None
+
+
+def _normalize(text: str | None) -> str:
+    return (text or "").strip().replace("\u2019", "'").replace("ё", "е").replace("Ё", "Е")
+
+
 def route(text: str, ui_lang: str = "en", today: date | None = None) -> Route:
     """Decide how to answer a free-form message."""
-    text = (text or "").strip()
+    text = _normalize(text)
     lang = detect_lang(text)
     if not text:
         return Route("filter", "filter.empty", ui_lang)
+    if is_red_flag(text):
+        return Route("filter", RED_FLAG, lang)
     if len(text) > MAX_CHARS:
         return Route("filter", "filter.too_long", lang or ui_lang)
     if lang is None:
         return Route("filter", "filter.unsupported_language", ui_lang)
-    filters, to_model, intents = _rules()
-    for key, pats in filters:
-        if _any(pats[lang], text):
-            return Route("filter", key, lang)
+    _, to_model, intents = _rules()
+    key = _filter_key(text, lang)
+    if key:
+        return Route("filter", key, lang)
     if _any(to_model[lang], text):
         return Route("model", "model", lang)
     today = today or date.today()

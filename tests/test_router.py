@@ -8,8 +8,9 @@ import yaml
 
 from secondwind.core.router import detect_lang, period_dates, route
 
-GOLDEN = yaml.safe_load((Path(__file__).resolve().parent.parent / "secondwind" / "contracts" / "golden" /
-                         "router.yaml").read_text(encoding="utf-8"))["cases"]
+GOLDEN_DIR = Path(__file__).resolve().parent.parent / "secondwind" / "contracts" / "golden"
+GOLDEN = [c for f in ("router", "filter")
+          for c in yaml.safe_load((GOLDEN_DIR / f"{f}.yaml").read_text(encoding="utf-8"))["cases"]]
 TODAY = date(2026, 11, 20)   # a Friday
 
 
@@ -41,3 +42,14 @@ def test_pace_params():
     assert route("темп 5:30 на 10 км", "ru").params == {"distance_km": 10.0, "pace_s": 330}
     assert route("half marathon in 1 h 50 min pace", "en").key == "model"    # no km number and no 'pace X:XX'
     assert route("marathon pace 4:15", "en").params == {"distance_km": 42.195, "pace_s": 255}
+
+
+def test_an_emergency_is_never_hidden_by_length():
+    long = "Расскажу подробно про тренировку. " * 60 + "И ещё болит в груди."
+    assert len(long) > 1000 and route(long, "ru").key == "filter.red_flag"
+
+
+def test_held_out_harmless_phrases_are_not_blocked():
+    cases = yaml.safe_load((GOLDEN_DIR / "heldout.yaml").read_text(encoding="utf-8"))["cases"]
+    blocked = [c["text"] for c in cases if c["expect"] == "pass" and route(c["text"], "ru", TODAY).kind == "filter"]
+    assert blocked == []

@@ -1,39 +1,71 @@
 # Messages answered with a fixed text, without the AI model. Patterns are Python regular
 # expressions, matched case-insensitively against the whole message. Order matters: the first
 # matching rule wins. Supported languages: ru, en (anything else gets lang.unsupported).
+# The text is normalized first (ё -> е, curly apostrophes). `unless`: the rule does not apply when
+# one of these matches. `any_language`: patterns of every language are checked.
 rules:
-  - key: filter.red_flag          # possible emergency: never "coach" this
+  # ── possible emergency: never "coach" this ──
+  - key: filter.red_flag
+    any_language: true
     ru:
-      - 'бол\w* (в|за) груд'
-      - 'дав\w* (в|за) груд'
-      - '(колет|кольнуло|щемит) (в )?сердц'
-      - 'сердц\w* (колет|щемит|сбоит)'
-      - 'потерял\w* сознание|обморок'
-      - 'задыха\w*|не могу (вздохнуть|дышать)'
-      - 'кровь (в моче|в мокроте|в кале)'
-      - 'немеет (левая )?рук'
-      - 'аритми\w*|перебо\w* (в|сердц)'
+      # chest
+      - '\b(болит|болят|болело|болел\w?|боль|боли|болью|болями|побалива\w*|разболел\w*|заболел\w*|колет|кольнул\w*|кололо|щемит|щемило|сдав\w*|сжим\w*|сжал\w*|жжет|жгло|жжени\w*)\W+(\w+\W+){0,3}(груди|грудь|грудью|грудин\w*|грудной клет\w*)\b'
+      - '\b(груди|грудь|грудина|грудиной|грудной клетке)\W+(\w+\W+){0,3}(болит|болят|болело|боль|боли|колет|кольнуло|щемит|давит|давило|сдав\w*|сжим\w*|сжал\w*|жжет|жжени\w*)'
+      - '\b(давит|давило|давление|давящ\w*|жмет|печет|тяжесть|стеснени\w*)\W+(\w+\W+){0,2}(в|за) (груди|грудиной|грудной)'
+      - '\b(в|за) (груди|грудиной|грудной клетке)\b|\bгрудь\W+(\w+\W+){0,1}(прихват\w*|схват\w*|сковал\w*|сперло)'   # anything felt inside the chest
+      # heart
+      - '\b(болит|боль|боли|колет|кольнул\w*|кололо|щемит|давит|жжет)\W+(\w+\W+){0,2}сердц\w*'
+      - '\bсердц\w*\W+(\w+\W+){0,2}(болит|болело|колет|колол\w*|щемит|сбоит|замира\w*|остановил\w*|останавлива\w*|пропуска\w*)'
+      - '\bперебо(й|и|я|ев|ями|ях)\b\W+(\w+\W+){0,2}(сердц\w*|ритм\w*|пульс\w*)|\bаритми\w*'
+      # fainting
+      - '(потеря\w*|теря\w*) сознани\w*|\bобморо\w*|(темнеет|потемнело|темно) в глазах|\bвырубил(о|ся|ась)\b'
+      # breathing at rest
+      - '(не хватает|не хватало|нехватк\w*) воздуха\W+(\w+\W+){0,3}(поко\w*|лежа|сидя|во сне|ночью)'
+      - '(одышк\w*|задыха\w*)\W+(\w+\W+){0,3}(в покое|лежа|сидя|во сне|ночью)|не могу (вздохнуть|вдохнуть|дышать|отдышаться)|дышать нечем|нечем дышать'
+      # bleeding, numbness, stroke
+      - '\bкров\w* (в|с) (моч\w*|мокрот\w*|кал\w*|стул\w*)|(моча|мокрота|кал|стул) с кровью|(кашл\w*|плю\w*|харка\w*|рвет|рвота) (с )?кровью'
+      - '(неме\w*|онеме\w*|отнял\w*)\W+(\w+\W+){0,2}(левая рук\w*|левую рук\w*|левой рук\w*|лиц\w*|челюст\w*|половин\w*)|(перекосило|перекошено) лицо|\b(рука левая|левая рука)\W+(\w+\W+){0,2}(неме|онеме|отня)\w*'
     en:
-      - 'chest (pain|tightness|pressure)'
-      - 'pain in (my )?chest'
-      - '(fainted|passed out|blacked out|lost consciousness)'
-      - "(short of breath|can'?t breathe|cannot breathe)"
-      - 'blood in (my )?(urine|stool|sputum)'
-      - '(left )?arm (is )?numb'
-      - '(irregular|skipping) heart ?beats?|arrhythmia'
-  - key: filter.injection        # attempts to change the bot's instructions or role
+      - "\\bchest\\W+(\\w+\\W+){0,3}(pain\\w*|hurt\\w*|tight\\w*|pressure|ach(e|es|ing)|burn\\w*|discomfort)"
+      - '\b(in|across|inside) (my |the )chest\b|\b(pain|pressure|tightness|ache|discomfort|burning|squeezing)\W+(in|on|across)\W+chest'
+      - '\bheart\W+(\w+\W+){0,2}(pain|hurts?|skip\w*|flutter\w*|stopp\w*)|\bheart\W+(\w+\W+){0,2}(racing|pounding)\W+(\w+\W+){0,3}(rest|lying|sitting|bed|night)|\bpalpitations?|irregular heart ?beats?|arrhythmia'
+      - '\bfaint(ed|ing)\b|\bcollapsed\b|passed out|blacked out|(lost|losing) consciousness'
+      - "(can'?t|cannot|couldn'?t) (breathe|catch my breath)|short(ness)? of breath\\W+(\\w+\\W+){0,3}(at rest|lying|sitting|in bed|at night)"
+      - 'blood in (my |the )?(urine|stool|sputum)|cough\w* (up )?blood'
+      - '\bleft arm\W+(\w+\W+){0,3}(numb\w*|tingl\w*)|\bnumb\w*\W+(\w+\W+){0,3}(left arm|face|side of)|face (is )?droop\w*'
+    unless:
+      ru: ['мышц\w* груд|грудн\w* мышц|крепатур|чест ?пресс']
+      en: ['chest (day|press|workout|muscles?|fly|flies)|\bpecs?\b']
+  - key: filter.red_flag          # breathlessness without a word about effort
+    any_language: true
+    ru: ['\bзадыха\w*|(не хватает|не хватало|нехватк\w*) воздуха|\bнеме\w* рука\b|\bонемела рука\b']
+    en: ["short(ness)? of breath|gasping for (air|breath)"]
+    unless:
+      ru: ['подъем|в гор[уы]|интервал|спринт|ускорени|на бегу|когда бегу|во время бега|при беге|в темпе|темпов|бассейн|плава|вел[оио]|руле']
+      en: ['uphill|climb|hill|interval|sprint|while (i )?run|when i run|during|swim|pool|bike|cycling|handlebar|pace']
+  # ── attempts to change the bot's instructions or role ──
+  - key: filter.injection
+    any_language: true
     ru:
-      - '(забудь|игнорируй|проигнорируй|отбрось|отмени|сбрось)\W+(\w+\W+){0,3}(инструкц|указани|правил|промпт|ограничени|настройк)'
-      - '(ты теперь|теперь ты|отныне ты|представь,? что ты|притворись|сыграй роль|веди себя как)'
-      - '(системн\w*|исходн\w*|скрыт\w*) (промпт|инструкц|подсказк)'
-      - '(режим разработчика|джейлбрейк|jailbreak|\bdan\b)'
-      - '(новые|другие) инструкции'
+      - '\b(забудь|игнорируй|проигнорируй|отбрось|отмени|сбрось)(те)?\W+(\w+\W+){0,3}(инструкц|указани|правил|промпт|ограничени|настройк)'
+      - '\b(забудь|игнорируй|проигнорируй|отбрось|сбрось)(те)?\W+(все|всю|весь)\W+(\w+\W+){0,4}(раньше|до этого|выше|предыдущ\w*|прошл\w*|сказан\w*|написан\w*)'
+      - '\b(забудь|игнорируй|проигнорируй|отбрось)(те)? все\W+(и|а|теперь|напиши|расскажи)\b'
+      - '(^|[.,!?;:]\W*|\bи )(ты теперь|теперь ты|отныне ты)\W+(не\W+)?(?!мне\b|меня\b|нам\b|все\b|тоже\b|точно\b|лучше\b|можешь\b|\w+(ешь|ишь|ешься|ишься)\b)\w+'
+      - '\b(представь,? что ты|притворись|сыграй роль|веди себя как|отвечай (мне )?как (будто|пират|робот|злой|другой))'
+      - '\b(системн\w*|исходн\w*|скрыт\w*) (промпт|инструкц|подсказк)'
+      - 'режим разработчика|джейлбрейк|jailbreak'
+      - '\b(покажи|выведи|повтори|раскрой|какие|какой)\W+(\w+\W+){0,2}(свои|твои|твой|свой|у тебя)\W+(\w+\W+){0,1}(инструкци\w*|правила|промпт\w*)'
+      - '\bне слушай\W+(\w+\W+){0,4}(говорил\w*|раньше|инструкц\w*|правил\w*)|\bотныне\W+(ты|отвечай|говори|будь|веди)\b'
+      - '\b(вот|следуй|выполняй)\W+(\w+\W+){0,2}нов\w+ инструкц'
     en:
-      - '(ignore|forget|disregard|override|bypass)\W+(\w+\W+){0,3}(instructions|rules|prompt|guidelines|restrictions)'
-      - '(you are now|from now on you|pretend (to be|you are)|act as an? |roleplay as|role-play as)'
-      - '(system|hidden|initial) (prompt|instructions)'
-      - '(developer mode|jailbreak|\bdan\b)'
-      - 'new instructions'
+      - '\b(ignore|forget|disregard|override|bypass)\W+(\w+\W+){0,2}(previous|prior|above|your|all|system|earlier)\W+(\w+\W+){0,2}(instructions?|rules|prompts?|guidelines|restrictions)'
+      - '(^|[.!?,;:]\W*|\bplease |\bnow )(ignore|forget|disregard)\W+(everything|what you (were|have been) told|all (of )?(the )?(above|that|previous))'
+      - '\byou are now\b|from now on,? (you|answer|respond|act|be|speak|talk)|\bpretend (to be|you are|you''re|that you)|role-?play as'
+      - '(^|[.!?,;:]\W*|\b(please|now|and|must|will|you) )act as (an?|if|the) '
+      - '\b(answer|respond|reply|speak|talk|behave)\W+(to me )?(as|like) (an? (?!coach|trainer|doctor|physician|nutritionist|beginner)|if )\w+'
+      - '\b(system|hidden|initial) (prompt|instructions)|\b(what (is|are)|show( me)?|print|reveal|repeat) your (\w+ )?(prompt|instructions|rules)|repeat the (text|words|message) above'
+      - 'developer mode|jailbreak|do anything now|\byou are dan\b|\bdan mode\b'
+      - '(here are|follow) (your |my |these )?new instructions'
   - key: filter.thanks
     ru: ['^\W*(спасибо|благодарю|спс|пасиб\w*)( большое| огромное)?\W*$']
     en: ['^\W*(thanks|thank you|thx|cheers)( a lot| so much)?\W*$']
