@@ -8,10 +8,7 @@ Pay special attention to:
 - Body Battery: persistently low means accumulated fatigue
 
 If you see worrying patterns, say so directly.
-{goal}
-
-Data:
-{data}
+The athlete's profile and goal are in <athlete>, their data in <data>.
 
 {format}
 

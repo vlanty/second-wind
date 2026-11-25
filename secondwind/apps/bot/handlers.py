@@ -12,8 +12,9 @@ from secondwind.adapters.llm.claude import ClaudeLLM
 from secondwind.adapters.warehouse.bigquery_reader import BigQueryReader
 from secondwind.core.assistant import ASK_PROMPT, COACH_PROMPT, HEALTH_PROMPT, NUTRITION_PROMPT, Refused, analyze
 from secondwind.core.freshness import stale_warnings
-from secondwind.core.guard import is_repeat, model_allowed, record_message, record_model_call
+from secondwind.core.guard import forget_message, is_repeat, model_allowed, record_message, record_model_call
 from secondwind.core.router import Route, is_red_flag, route as route_message
+from secondwind.core.scope import ERROR as SCOPE_ERROR, classify, scope_route
 from secondwind.core.ports import LLM, DataReader, StateStore
 from secondwind.core import analytics
 from secondwind.apps.bot import charts, tenancy
@@ -624,21 +625,45 @@ async def on_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             return
         await _show(update, text, kb)
         return
+    question = update.message.text[:1000]
     r = _guarded_route(update, user, update.message.text, datetime.now(timezone.utc))
-    if r.kind != "model":
-        try:
-            answer = _fast_answer(update, r, user)
-        except Exception as e:  # noqa: BLE001 - any failure falls back to the model
-            logger.error("fast answer %s failed: %s", r.key, e)
-            answer = None
-        logger.info("route kind=%s key=%s answered_without_ai=%s", r.kind, r.key, answer is not None)
-        if answer is not None:
-            text, kw = answer
-            await _reply(update, text, **kw)
-            return
-    else:
+    if await _reply_without_model(update, r, user):
+        return
+    # Nothing reaches the answering model unless the classifier recognized it as on topic.
+    r = _scope_check(update, question, r.lang)
+    if await _reply_without_model(update, r, user):
+        return
+    await _ai_reply(update, ASK_PROMPT, "ask", "chat", question=question)
+
+
+async def _reply_without_model(update: Update, r: Route, user: dict) -> bool:
+    if r.kind == "model":
         logger.info("route kind=model")
-    await _ai_reply(update, ASK_PROMPT, "ask", "chat", question=update.message.text[:1000])
+        return False
+    try:
+        answer = _fast_answer(update, r, user)
+    except Exception as e:  # noqa: BLE001 - a failed fact or calculation is answered by the model
+        logger.error("fast answer %s failed: %s", r.key, e)
+        answer = None
+    logger.info("route kind=%s key=%s answered_without_ai=%s", r.kind, r.key, answer is not None)
+    if answer is None:
+        return False
+    text, kw = answer
+    await _reply(update, text, **kw)
+    return True
+
+
+def _scope_check(update: Update, question: str, lang: str) -> Route:
+    verdict = classify(_llm(), question)
+    if verdict.response is not None:
+        _record_usage(update, verdict.response)
+    if verdict.label == SCOPE_ERROR:
+        try:
+            guard = _store().get_user(_uid(update)).get("guard") or {}
+            _store().update_guard(_uid(update), forget_message(guard))
+        except Exception as e:  # noqa: BLE001
+            logger.error("guard write failed: %s", e)
+    return scope_route(verdict, question, lang)
 
 
 # ---------- answers without the AI model (filter and rule router) ----------

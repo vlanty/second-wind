@@ -5,10 +5,7 @@ In this answer you act as a sports nutritionist. Give concrete recommendations w
 - Hydration (ml per hour for this type of training)
 - For long workouts, a fueling strategy during the session
 Base calorie numbers on the athlete profile when it is given; if weight is missing, say what you assumed.
-{goal}
-
-Training and load data:
-{data}
+The athlete's profile and goal are in <athlete>, their data in <data>.
 
 {format}
 

@@ -32,6 +32,11 @@ def record_message(guard: dict, text: str, now: datetime) -> dict:
     return {**guard, "last_hash": _hash(text), "last_at": now.isoformat()}
 
 
+def forget_message(guard: dict) -> dict:
+    """The message was not answered: the same text may be sent again at once."""
+    return {**guard, "last_hash": None, "last_at": None}
+
+
 def _recent(guard: dict, now: datetime) -> list[str]:
     return [c for c in guard.get("model_calls") or [] if now - _ts(c) < RATE_WINDOW]
 

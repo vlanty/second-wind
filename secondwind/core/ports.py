@@ -96,6 +96,8 @@ class LLMRequest:
     effort: str | None = None
     max_tokens: int = 16000
     task: str = ""                        # for logs only
+    schema: dict | None = None            # JSON schema the answer must follow
+    timeout: float | None = None          # seconds per attempt; None = the vendor SDK default
 
 
 @dataclass

@@ -52,8 +52,15 @@ class ClaudeLLM:
     def complete(self, req: LLMRequest) -> LLMResponse:
         model = req.model or TIER_MODELS[req.tier]
         params: dict = dict(model=model, max_tokens=req.max_tokens, messages=req.messages)
+        output_config: dict = {}
         if req.effort:
-            params["output_config"] = {"effort": req.effort}
+            output_config["effort"] = req.effort
+        if req.schema:
+            output_config["format"] = {"type": "json_schema", "schema": req.schema}
+        if output_config:
+            params["output_config"] = output_config
+        if req.timeout:
+            params["timeout"] = req.timeout
         if req.system:
             params["system"] = [{"type": "text", "text": b.text,
                                  **({"cache_control": {"type": "ephemeral"}} if b.cache else {})}
