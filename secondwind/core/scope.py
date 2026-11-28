@@ -12,6 +12,9 @@ import logging
 import re
 from dataclasses import dataclass
 from datetime import date
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 from secondwind.core.assistant import load_prompt
 from secondwind.core.models import effort_for, model_override, tier_for
@@ -31,8 +34,15 @@ ERROR, REFUSED = "classifier_error", "refused"   # not labels: what happened ins
 NEEDS_PERIOD = ("fact.run_distance", "fact.metric")
 
 CLASSIFY_PROMPT = load_prompt("classify")
-SCHEMA = {"type": "object", "properties": {"label": {"type": "string", "enum": list(LABELS)}},
-          "required": ["label"], "additionalProperties": False}
+
+
+class ScopeAnswer(BaseModel):
+    """What the classifier must return; the JSON schema sent to the model is built from it."""
+    model_config = ConfigDict(extra="forbid", strict=True)
+    label: Literal[LABELS]  # type: ignore[valid-type]
+
+
+SCHEMA = ScopeAnswer.model_json_schema()
 
 
 @dataclass
@@ -47,10 +57,9 @@ def _label(r: LLMResponse) -> str:
     if r.stop_reason == "max_tokens":
         return ERROR
     try:
-        label = json.loads(r.text)["label"]
-    except (ValueError, TypeError, KeyError):
+        return ScopeAnswer.model_validate_json(r.text).label
+    except ValidationError:
         return ERROR
-    return label if isinstance(label, str) and label in LABELS else ERROR
 
 
 def classify(llm: LLM, text: str) -> Verdict:

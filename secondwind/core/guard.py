@@ -25,7 +25,7 @@ def _ts(v: str) -> datetime:
 
 def is_repeat(guard: dict, text: str, now: datetime) -> bool:
     last = guard.get("last_at")
-    return bool(last) and guard.get("last_hash") == _hash(text) and now - _ts(last) < REPEAT_WINDOW
+    return last is not None and guard.get("last_hash") == _hash(text) and now - _ts(last) < REPEAT_WINDOW
 
 
 def record_message(guard: dict, text: str, now: datetime) -> dict:

@@ -109,7 +109,7 @@ def main() -> int:
     run_id = uuid.uuid4().hex[:12]
     bucket = None
     if env.get("RAW_BUCKET"):
-        from google.cloud import storage
+        from google.cloud import storage  # type: ignore[attr-defined]  # namespace package
         bucket = storage.Client(project=env["GCP_PROJECT"]).bucket(env["RAW_BUCKET"])
 
     results = {n: run_source(n, env, bq, state, bucket, user_id, run_id) for n in names}

@@ -88,7 +88,7 @@ def route(text: str, ui_lang: str = "en", today: date | None = None) -> Route:
     if not text:
         return Route("filter", "filter.empty", ui_lang)
     if is_red_flag(text):
-        return Route("filter", RED_FLAG, lang)
+        return Route("filter", RED_FLAG, lang or ui_lang)
     if len(text) > MAX_CHARS:
         return Route("filter", "filter.too_long", lang or ui_lang)
     if lang is None:

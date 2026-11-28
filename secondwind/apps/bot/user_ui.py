@@ -96,8 +96,8 @@ def render_profile(lang: str, profile: dict, watch: dict | None = None) -> tuple
             trend = ""
             if then and then != z.lthr:
                 d = watch.get("lthr_then_date")
-                trend = " " + t(lang, "prof.lthr_trend", diff=f"{z.lthr - then:+d}",
-                                date=d.strftime("%d.%m.%Y") if hasattr(d, "strftime") else d)
+                when = d.strftime("%d.%m.%Y") if d is not None and hasattr(d, "strftime") else d
+                trend = " " + t(lang, "prof.lthr_trend", diff=f"{z.lthr - then:+d}", date=when)
             lines.append(t(lang, "prof.lthr_watch", lthr=z.lthr) + trend)
             if profile.get("lthr"):
                 lines.append(t(lang, "prof.lthr_ignored"))

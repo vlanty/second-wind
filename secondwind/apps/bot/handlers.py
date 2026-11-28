@@ -1,9 +1,12 @@
+import asyncio
+from collections.abc import Awaitable, Callable
 import logging
 import os
 from datetime import date, datetime, timedelta, timezone
 from functools import lru_cache
 
-from telegram import BotCommand, BotCommandScopeChat, InlineKeyboardButton, InlineKeyboardMarkup, InputFile, Update
+from telegram import (BotCommand, BotCommandScopeChat, InlineKeyboardButton, InlineKeyboardMarkup, InputFile, Message,
+                      Update)
 from telegram.error import BadRequest
 from telegram.ext import ContextTypes
 from telegram.helpers import escape_markdown
@@ -74,13 +77,18 @@ def _llm() -> LLM:
 
 
 def _uid(update: Update) -> str:
-    """The internal user_id of this chat (callers have passed _guard)."""
-    return tenancy.user_for_chat(update.effective_chat.id)
+    """The internal user_id of this chat (callers have passed _guard, so both exist)."""
+    chat = update.effective_chat
+    uid = tenancy.user_for_chat(chat.id if chat is not None else None)
+    if uid is None:
+        raise PermissionError("chat is not linked to a user")
+    return uid
 
 
 def _user(update: Update) -> dict:
     """The user's stored state; {} if storage is unavailable (the bot keeps working without it)."""
-    uid = _uid(update) if update.effective_chat is not None else None
+    chat = update.effective_chat
+    uid = tenancy.user_for_chat(chat.id) if chat is not None else None
     if uid is None:
         return {}
     try:
@@ -224,6 +232,16 @@ def _context(bq: DataReader) -> str:
     )
 
 
+async def _io(fn, *args, **kw):
+    """Run a blocking call (BigQuery, Firestore, the AI model, charts) in a thread, so the event
+    loop keeps serving other messages meanwhile."""
+    return await asyncio.to_thread(fn, *args, **kw)
+
+
+async def _alang(update: Update) -> str:
+    return _lang(update, await _io(_user, update))
+
+
 async def _guard(update: Update) -> bool:
     if _allowed(update):
         return True
@@ -231,8 +249,15 @@ async def _guard(update: Update) -> bool:
     return False
 
 
+def _message(update: Update) -> Message:
+    msg = update.effective_message
+    if msg is None:
+        raise ValueError("update without a message")
+    return msg
+
+
 async def _reply(update: Update, text: str, **kw):
-    await update.effective_message.reply_text(text, **kw)
+    await _message(update).reply_text(text, **kw)
 
 
 # ---------- menu ----------
@@ -252,7 +277,8 @@ async def setup_menu(bot) -> None:
     # A language fixed in /settings or by BOT_LANGUAGE applies whatever the Telegram app language is.
     try:
         uid = tenancy.owner_user_id()
-        chosen = (_store().get_user(uid).get("settings") or {}).get("lang") if uid else None
+        user = await _io(lambda: _store().get_user(uid)) if uid else {}
+        chosen = (user.get("settings") or {}).get("lang")
     except Exception as e:  # noqa: BLE001
         logger.error("state read failed: %s", e)
         chosen = None
@@ -279,19 +305,21 @@ async def _set_names(bot) -> None:
             logger.warning("bot name for %s not set: %s", lang, e)
 
 
-async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE | None):
     if not await _guard(update):
         return
-    lang = _lang(update)
+    lang = await _alang(update)
     await _reply(update, t(lang, "menu.title"), reply_markup=_menu_markup(lang))
 
 
 cmd_menu = cmd_start
 
 
-async def on_button(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def on_button(update: Update, ctx: ContextTypes.DEFAULT_TYPE | None):
     """All inline buttons: cmd:<command>, set:<key>:<value>, prof:..., goal:..."""
     query = update.callback_query
+    if query is None:
+        return
     await query.answer()
     if not await _guard(update):
         return
@@ -312,48 +340,54 @@ async def on_button(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 # ---------- analytics without AI ----------
 
-async def cmd_records(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def cmd_records(update: Update, ctx: ContextTypes.DEFAULT_TYPE | None):
     if not await _guard(update):
         return
-    lang = _lang(update)
-    rows = _bq(update).get_records(date.today() - timedelta(days=365))
+    lang = await _alang(update)
+    rows = await _io(lambda: _bq(update).get_records(date.today() - timedelta(days=365)))
     await _reply(update, analytics.render_records(lang, rows), parse_mode="HTML")
 
 
-async def cmd_month(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def cmd_month(update: Update, ctx: ContextTypes.DEFAULT_TYPE | None):
     if not await _guard(update):
         return
-    lang = _lang(update)
+    lang = await _alang(update)
     today = date.today()
     prev_end = today.replace(day=1) - timedelta(days=1)
-    bq = _bq(update)
-    text = analytics.render_month(lang, today, bq.get_period(today.replace(day=1), today),
-                                  bq.get_period(prev_end.replace(day=1), prev_end))
+
+    def build():
+        bq = _bq(update)
+        return analytics.render_month(lang, today, bq.get_period(today.replace(day=1), today),
+                                      bq.get_period(prev_end.replace(day=1), prev_end))
+    text = await _io(build)
     await _reply(update, text, parse_mode="HTML")
 
 
-async def cmd_compare(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def cmd_compare(update: Update, ctx: ContextTypes.DEFAULT_TYPE | None):
     if not await _guard(update):
         return
-    lang = _lang(update)
+    lang = await _alang(update)
     kb = InlineKeyboardMarkup([[InlineKeyboardButton(t(lang, f"cmp.btn.{s}"), callback_data=f"cmp:{s}")
                                 for s in analytics.COMPARE_SPANS]])
     await _reply(update, t(lang, "cmp.pick"), reply_markup=kb)
 
 
 async def _send_compare(update: Update, span: str):
-    lang = _lang(update)
+    lang = await _alang(update)
     today = date.today()
     (a0, a1), (b0, b1) = analytics.periods(span, today)
-    bq = _bq(update)
-    text = analytics.render_compare(lang, span, today, bq.get_period(a0, a1), bq.get_period(b0, b1))
+
+    def build():
+        bq = _bq(update)
+        return analytics.render_compare(lang, span, today, bq.get_period(a0, a1), bq.get_period(b0, b1))
+    text = await _io(build)
     await _reply(update, text, parse_mode="HTML")
 
 
-async def cmd_charts(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def cmd_charts(update: Update, ctx: ContextTypes.DEFAULT_TYPE | None):
     if not await _guard(update):
         return
-    lang = _lang(update)
+    lang = await _alang(update)
     names = list(charts.CHARTS)
     kb = InlineKeyboardMarkup([[InlineKeyboardButton(t(lang, f"chart.btn.{c}"), callback_data=f"chart:{c}")
                                 for c in names[i:i + 2]] for i in range(0, len(names), 2)])
@@ -361,9 +395,9 @@ async def cmd_charts(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 async def _send_chart(update: Update, name: str):
-    lang = _lang(update)
-    png = charts.render(name, lang, _bq(update))
-    await update.effective_message.reply_photo(InputFile(png, filename=f"{name}.png"))
+    lang = await _alang(update)
+    png = await _io(lambda: charts.render(name, lang, _bq(update)))
+    await _message(update).reply_photo(InputFile(png, filename=f"{name}.png"))
 
 
 # ---------- settings, profile, goal ----------
@@ -383,7 +417,7 @@ async def _show(update: Update, text: str, kb, edit: bool = False):
 async def _stored(update: Update, lang: str, action) -> bool:
     """Run a state write; tell the user if storage is down."""
     try:
-        action()
+        await _io(action)
         return True
     except Exception as e:  # noqa: BLE001
         logger.error("state write failed: %s", e)
@@ -404,13 +438,13 @@ def _month() -> str:
     return date.today().strftime("%Y-%m")
 
 
-async def cmd_settings(update: Update, ctx: ContextTypes.DEFAULT_TYPE, edit: bool = False):
+async def cmd_settings(update: Update, ctx: ContextTypes.DEFAULT_TYPE | None, edit: bool = False):
     if not await _guard(update):
         return
-    user = _user(update)
+    user = await _io(_user, update)
     lang = _lang(update, user)
     try:
-        usage = _store().get_usage(_uid(update), _month())
+        usage = await _io(lambda: _store().get_usage(_uid(update), _month()))
     except Exception as e:  # noqa: BLE001
         logger.error("usage read failed: %s", e)
         usage = {}
@@ -418,7 +452,7 @@ async def cmd_settings(update: Update, ctx: ContextTypes.DEFAULT_TYPE, edit: boo
 
 
 async def _on_setting(update: Update, key: str, value: str):
-    lang = _lang(update)
+    lang = await _alang(update)
     ok = await _stored(update, lang, lambda: apply_setting(_store(), _uid(update), key, value))
     if ok:
         if key == "lang":
@@ -426,16 +460,16 @@ async def _on_setting(update: Update, key: str, value: str):
         await cmd_settings(update, None, edit=True)
 
 
-async def cmd_profile(update: Update, ctx: ContextTypes.DEFAULT_TYPE, edit: bool = False):
+async def cmd_profile(update: Update, ctx: ContextTypes.DEFAULT_TYPE | None, edit: bool = False):
     if not await _guard(update):
         return
-    user = _user(update)
-    await _show(update, *render_profile(_lang(update, user), user.get("profile") or {}, _athlete_inputs(update)),
-                edit=edit)
+    user = await _io(_user, update)
+    inputs = await _io(_athlete_inputs, update)
+    await _show(update, *render_profile(_lang(update, user), user.get("profile") or {}, inputs), edit=edit)
 
 
 async def _on_profile_button(update: Update, rest: str):
-    lang = _lang(update)
+    lang = await _alang(update)
     action, _, field = rest.partition(":")
     if action == "clear":
         if await _stored(update, lang, lambda: _store().clear_profile(_uid(update))):
@@ -447,12 +481,12 @@ async def _on_profile_button(update: Update, rest: str):
             await _reply(update, ask_text(lang, pending))
 
 
-async def cmd_goal(update: Update, ctx: ContextTypes.DEFAULT_TYPE, edit: bool = False):
+async def cmd_goal(update: Update, ctx: ContextTypes.DEFAULT_TYPE | None, edit: bool = False):
     if not await _guard(update):
         return
-    lang = _lang(update)
+    lang = await _alang(update)
     try:
-        goal = _store().get_goal(_uid(update))
+        goal = await _io(lambda: _store().get_goal(_uid(update)))
     except Exception as e:  # noqa: BLE001
         logger.error("goal read failed: %s", e)
         goal = None
@@ -460,7 +494,7 @@ async def cmd_goal(update: Update, ctx: ContextTypes.DEFAULT_TYPE, edit: bool = 
 
 
 async def _on_goal_button(update: Update, rest: str):
-    lang = _lang(update)
+    lang = await _alang(update)
     action, _, value = rest.partition(":")
     uid = _uid(update)
     if action == "new":
@@ -476,10 +510,10 @@ async def _on_goal_button(update: Update, rest: str):
             await _reply(update, ask_text(lang, pending))
 
 
-async def cmd_cancel(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def cmd_cancel(update: Update, ctx: ContextTypes.DEFAULT_TYPE | None):
     if not await _guard(update):
         return
-    user = _user(update)
+    user = await _io(_user, update)
     lang = _lang(update, user)
     if not user.get("pending"):
         await _reply(update, t(lang, "nothing_to_cancel"))
@@ -490,14 +524,16 @@ async def cmd_cancel(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 # ---------- data commands ----------
 
-async def cmd_today(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+def _today_data(update: Update):
+    bq = _bq(update)
+    return bq.get_last_activity(), bq.get_health_last_days(4), bq.get_load_last_days(1), bq.get_source_status()
+
+
+async def cmd_today(update: Update, ctx: ContextTypes.DEFAULT_TYPE | None):
     if not await _guard(update):
         return
-    lang = _lang(update)
-    bq = _bq(update)
-    act = bq.get_last_activity()
-    health = bq.get_health_last_days(4)
-    loads = bq.get_load_last_days(1)
+    lang = await _alang(update)
+    act, health, loads, status = await _io(_today_data, update)
     load = loads[-1] if loads else None
     parts = [f"*{t(lang, 'today.last_workout')}*",
              _fmt_activity(act, lang) if act else t(lang, "today.no_activities")]
@@ -506,15 +542,15 @@ async def cmd_today(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if load:
         parts += ["", f"*{t(lang, 'today.load')}*", _md(_fmt_load(load, lang))]
     parts += ["", _md(_estimates(health, load, lang))]
-    parts += stale_warnings(bq.get_source_status(), _enabled_sources(), lang)
+    parts += stale_warnings(status, _enabled_sources(), lang)
     await _reply(update, "\n".join(parts), parse_mode="Markdown")
 
 
-async def cmd_week(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def cmd_week(update: Update, ctx: ContextTypes.DEFAULT_TYPE | None):
     if not await _guard(update):
         return
-    lang = _lang(update)
-    acts = _bq(update).get_week_activities()
+    lang = await _alang(update)
+    acts = await _io(lambda: _bq(update).get_week_activities())
     if not acts:
         await _reply(update, t(lang, "week.empty"))
         return
@@ -525,11 +561,11 @@ async def cmd_week(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await _reply(update, "\n\n".join(parts), parse_mode="Markdown")
 
 
-async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE | None):
     if not await _guard(update):
         return
-    lang = _lang(update)
-    rows = _bq(update).get_source_status()
+    lang = await _alang(update)
+    rows = await _io(lambda: _bq(update).get_source_status())
     enabled = _enabled_sources()
     lines = [t(lang, "status.sources", list=", ".join(enabled) or "—")]
     for r in rows:
@@ -560,10 +596,8 @@ def _record_usage(update: Update, answer) -> None:
         logger.error("usage write failed: %s", e)
 
 
-async def _ai_reply(update: Update, prompt: str, label: str, task: str, **fmt):
-    user = _user(update)
-    lang = _lang(update, user)
-    mode = (user.get("settings") or {}).get("mode", DEFAULT_MODE)
+def _athlete(update: Update, user: dict) -> str:
+    """The athlete note for the model: profile, goal, zones (reads Firestore and BigQuery)."""
     try:
         goal = _store().get_goal(_uid(update))
     except Exception as e:  # noqa: BLE001
@@ -573,13 +607,21 @@ async def _ai_reply(update: Update, prompt: str, label: str, task: str, **fmt):
     inputs = _athlete_inputs(update)
     lthr_then = ((inputs["lthr_then"], str(inputs["lthr_then_date"]))
                  if inputs.get("lthr_then") and inputs.get("lthr_then_date") else None)
-    athlete = athlete_note(profile, goal, date.today(),
-                           zones=compute_zones(profile, inputs, inputs.get("resting_hr_7d")),
-                           garmin_resting_hr=inputs.get("resting_hr_7d"), lthr_then=lthr_then)
+    return athlete_note(profile, goal, date.today(),
+                        zones=compute_zones(profile, inputs, inputs.get("resting_hr_7d")),
+                        garmin_resting_hr=inputs.get("resting_hr_7d"), lthr_then=lthr_then)
+
+
+async def _ai_reply(update: Update, prompt: str, label: str, task: str, **fmt):
+    user = await _io(_user, update)
+    lang = _lang(update, user)
+    mode = (user.get("settings") or {}).get("mode", DEFAULT_MODE)
+    athlete = await _io(_athlete, update, user)
     await _reply(update, t(lang, "ai.working", label=t(lang, f"ai.label.{label}")))
     try:
-        answer = analyze(_llm(), prompt, _context(_bq(update)), task, lang, mode=mode, athlete=athlete, **fmt)
-        _record_usage(update, answer)
+        answer = await _io(lambda: analyze(_llm(), prompt, _context(_bq(update)), task, lang, mode=mode,
+                                           athlete=athlete, **fmt))
+        await _io(_record_usage, update, answer)
         if not answer.text:
             await _reply(update, t(lang, "ai.error"))
             return
@@ -592,45 +634,48 @@ async def _ai_reply(update: Update, prompt: str, label: str, task: str, **fmt):
         await _reply(update, t(lang, "ai.error"))
 
 
-async def cmd_coach(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def cmd_coach(update: Update, ctx: ContextTypes.DEFAULT_TYPE | None):
     if await _guard(update):
         await _ai_reply(update, COACH_PROMPT, "coach", "analysis")
 
 
-async def cmd_health(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def cmd_health(update: Update, ctx: ContextTypes.DEFAULT_TYPE | None):
     if await _guard(update):
         await _ai_reply(update, HEALTH_PROMPT, "health", "analysis")
 
 
-async def cmd_nutrition(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def cmd_nutrition(update: Update, ctx: ContextTypes.DEFAULT_TYPE | None):
     if await _guard(update):
         await _ai_reply(update, NUTRITION_PROMPT, "nutrition", "analysis")
 
 
-async def on_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def on_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE | None):
     """An answer to a pending question (profile/goal input), otherwise a free-form question."""
-    if not await _guard(update):
+    if not await _guard(update) or update.message is None or update.message.text is None:
         return
-    user = _user(update)
+    text_in = update.message.text
+    user = await _io(_user, update)
     pending = user.get("pending")
-    if pending and not is_red_flag(update.message.text):   # an emergency is never taken as form input
+    if pending and not is_red_flag(text_in):   # an emergency is never taken as form input
         lang = _lang(update, user)
-        try:
+
+        def take_input():
             watch = _athlete_inputs(update) if pending.get("kind") == "profile" else None
-            text, kb = handle_input(_store(), _uid(update), lang, pending, update.message.text, date.today(),
-                                    watch)
+            return handle_input(_store(), _uid(update), lang, pending, text_in, date.today(), watch)
+        try:
+            text, kb = await _io(take_input)
         except Exception as e:  # noqa: BLE001
             logger.error("input handling failed: %s", e)
             await _reply(update, t(lang, "storage.error"))
             return
         await _show(update, text, kb)
         return
-    question = update.message.text[:1000]
-    r = _guarded_route(update, user, update.message.text, datetime.now(timezone.utc))
+    question = text_in[:1000]
+    r = await _io(_guarded_route, update, user, text_in, datetime.now(timezone.utc))
     if await _reply_without_model(update, r, user):
         return
     # Nothing reaches the answering model unless the classifier recognized it as on topic.
-    r = _scope_check(update, question, r.lang)
+    r = await _io(_scope_check, update, question, r.lang)
     if await _reply_without_model(update, r, user):
         return
     await _ai_reply(update, ASK_PROMPT, "ask", "chat", question=question)
@@ -641,7 +686,7 @@ async def _reply_without_model(update: Update, r: Route, user: dict) -> bool:
         logger.info("route kind=model")
         return False
     try:
-        answer = _fast_answer(update, r, user)
+        answer = await _io(_fast_answer, update, r, user)
     except Exception as e:  # noqa: BLE001 - a failed fact or calculation is answered by the model
         logger.error("fast answer %s failed: %s", r.key, e)
         answer = None
@@ -778,17 +823,21 @@ def _fast_answer(update: Update, r: Route, user: dict) -> tuple[str, dict] | Non
 
 def _clears_pending(handler):
     """A command interrupts any half-finished input, so the next text isn't taken as an answer."""
-    async def wrapped(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-        if _allowed(update) and _user(update).get("pending"):
-            try:
+    async def wrapped(update: Update, ctx: ContextTypes.DEFAULT_TYPE | None):
+        def clear():
+            if _user(update).get("pending"):
                 _store().set_pending(_uid(update), None)
+        if _allowed(update):
+            try:
+                await _io(clear)
             except Exception as e:  # noqa: BLE001
                 logger.error("state write failed: %s", e)
         await handler(update, ctx)
     return wrapped
 
 
-COMMANDS = {
+Handler = Callable[[Update, ContextTypes.DEFAULT_TYPE | None], Awaitable[None]]
+COMMANDS: dict[str, Handler] = {
     "menu": cmd_menu, "today": cmd_today, "week": cmd_week, "coach": cmd_coach,
     "health": cmd_health, "nutrition": cmd_nutrition, "goal": cmd_goal, "profile": cmd_profile,
     "settings": cmd_settings, "status": cmd_status, "records": cmd_records, "month": cmd_month,

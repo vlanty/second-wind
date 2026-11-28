@@ -54,7 +54,7 @@ class Registry:
 
     def method_allows(self, method: str, metric: str) -> bool:
         m = self.methods.get(method)
-        return bool(m) and any(fnmatchcase(metric, p) for p in m["metrics"])
+        return m is not None and any(fnmatchcase(metric, p) for p in m["metrics"])
 
     def check_observation(self, metric: str, method: str, unit: str | None) -> None:
         """Raise if a plugin is about to write a row the registries do not describe."""
