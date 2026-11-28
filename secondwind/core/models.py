@@ -19,6 +19,7 @@ from secondwind.core.ports import Tier
 TASKS: dict[str, tuple[Tier, str]] = {
     "chat":     ("medium", "low"),     # free-form questions
     "classify": ("small", "low"),      # is the message on topic (core/scope.py)
+    "rewrite":  ("small", "low"),      # a follow-up as a standalone question (core/scope.py)
     "analysis": ("medium", "medium"),  # /coach /health /nutrition
     "weekly":   ("small", "low"),      # weekly summary (stage 5)
     "alerts":   ("small", "low"),      # health alerts (stage 5)

@@ -10,7 +10,8 @@ from __future__ import annotations
 import json
 import logging
 import re
-from dataclasses import dataclass
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field
 from datetime import date
 from typing import Literal
 
@@ -42,38 +43,102 @@ class ScopeAnswer(BaseModel):
     label: Literal[LABELS]  # type: ignore[valid-type]
 
 
+class RewriteAnswer(BaseModel):
+    """What the follow-up rewrite must return (prompts/rewrite.md)."""
+    model_config = ConfigDict(extra="forbid", strict=True)
+    follow_up: bool          # the message continues the previous questions
+    question: str            # the message as one standalone question (or unchanged)
+
+
 SCHEMA = ScopeAnswer.model_json_schema()
+REWRITE_SCHEMA = RewriteAnswer.model_json_schema()
+REWRITE_TASK = "rewrite"
+REWRITE_PROMPT = load_prompt("rewrite")
+MAX_QUESTION = 500           # a longer rewrite is ignored
+# When the message and its rewrite get different labels, the first of these wins; otherwise the
+# rewrite's label (it says what the follow-up asks for).
+STRICTER = (ERROR, REFUSED, "emergency", "crisis", "injection", "off_topic")
 
 
 @dataclass
 class Verdict:
     label: str                           # one of LABELS, or ERROR / REFUSED
-    response: LLMResponse | None = None  # for the usage counter
+    responses: list[LLMResponse] = field(default_factory=list)   # for the usage counter
+    follow_up: bool = False
+    question: str = ""                   # standalone question; the message itself unless a usable rewrite
+
+    @property
+    def response(self) -> LLMResponse | None:
+        return self.responses[0] if self.responses else None
 
 
-def _label(r: LLMResponse) -> str:
+def _request(task: str, prompt: str, schema: dict, content: dict) -> LLMRequest:
+    return LLMRequest(tier=tier_for(task), model=model_override(task), effort=effort_for(task), task=task,
+                      system=[Block(prompt)], max_tokens=1024, schema=schema, timeout=TIMEOUT_S,
+                      messages=[{"role": "user", "content": json.dumps(content, ensure_ascii=False)}])
+
+
+def _failed(r: LLMResponse) -> str | None:
     if r.refused:
         return REFUSED
     if r.stop_reason == "max_tokens":
         return ERROR
-    try:
-        return ScopeAnswer.model_validate_json(r.text).label
-    except ValidationError:
-        return ERROR
+    return None
 
 
 def classify(llm: LLM, text: str) -> Verdict:
-    req = LLMRequest(tier=tier_for(TASK), model=model_override(TASK), effort=effort_for(TASK), task=TASK,
-                     system=[Block(CLASSIFY_PROMPT)], max_tokens=1024, schema=SCHEMA, timeout=TIMEOUT_S,
-                     messages=[{"role": "user", "content": json.dumps({"message": text}, ensure_ascii=False)}])
+    """One label for one message; the classifier sees nothing else."""
     try:
-        r = llm.complete(req)
+        r = llm.complete(_request(TASK, CLASSIFY_PROMPT, SCHEMA, {"message": text}))
     except Exception as e:  # noqa: BLE001 - a broken classifier must not open the gate
         logger.error("classifier failed: %s", type(e).__name__)
-        return Verdict(ERROR)
-    verdict = Verdict(_label(r), r)
-    logger.info("scope label=%s model=%s in=%s out=%s", verdict.label, r.model, r.input_tokens, r.output_tokens)
-    return verdict
+        return Verdict(ERROR, question=text)
+    label = _failed(r)
+    if label is None:
+        try:
+            label = ScopeAnswer.model_validate_json(r.text).label
+        except ValidationError:
+            label = ERROR
+    logger.info("scope label=%s model=%s in=%s out=%s", label, r.model, r.input_tokens, r.output_tokens)
+    return Verdict(label, [r], question=text)
+
+
+def rewrite(llm: LLM, text: str, previous: list[str]) -> tuple[str | None, LLMResponse | None]:
+    """The message as a standalone question when it continues the previous questions, else None.
+    Only the questions are sent, never the answers or the data."""
+    try:
+        r = llm.complete(_request(REWRITE_TASK, REWRITE_PROMPT, REWRITE_SCHEMA,
+                                  {"previous_questions": previous, "message": text}))
+    except Exception as e:  # noqa: BLE001 - without a rewrite the message is classified as it is
+        logger.error("rewrite failed: %s", type(e).__name__)
+        return None, None
+    if _failed(r):
+        return None, r
+    try:
+        a = RewriteAnswer.model_validate_json(r.text)
+    except ValidationError:
+        return None, r
+    q = a.question.strip()
+    usable = a.follow_up and 0 < len(q) <= MAX_QUESTION and q != text
+    logger.info("rewrite follow_up=%s used=%s", a.follow_up, usable)
+    return (q if usable else None), r
+
+
+def check(llm: LLM, text: str, previous: list[str] | None = None) -> Verdict:
+    """The gate for a free-form message. With previous questions, a follow-up is rewritten and both
+    the message and the rewrite are classified; the stricter label wins."""
+    if not previous:
+        return classify(llm, text)
+    standalone, rw = rewrite(llm, text, previous)
+    if standalone is None:
+        v = classify(llm, text)
+        v.responses = ([rw] if rw else []) + v.responses
+        return v
+    with ThreadPoolExecutor(2) as pool:
+        original, rewritten = pool.map(lambda q: classify(llm, q), (text, standalone))
+    label = next((lb for lb in STRICTER if lb in (original.label, rewritten.label)), rewritten.label)
+    return Verdict(label, ([rw] if rw else []) + original.responses + rewritten.responses,
+                   follow_up=True, question=standalone)
 
 
 def scope_route(verdict: Verdict, text: str, lang: str, today: date | None = None) -> Route:

@@ -4,6 +4,7 @@ Layout:
   users/{user_id}                  profile{...}, settings{...}, pending{...}
   users/{user_id}/goals/active     the current goal (one at a time)
   users/{user_id}/usage/{YYYY-MM}  calls, input_tokens, output_tokens, cost_usd
+  users/{user_id}/dialog/{auto}    q, a, at: the last dialog exchanges (core/dialog.py)
   identities/{provider:id}         user_id   (e.g. identities/telegram:123)
 """
 
@@ -72,6 +73,16 @@ class FirestoreStore:
 
     def update_guard(self, user_id, guard):
         self._update(user_id, {"guard": guard})
+
+    def add_dialog(self, user_id, entry):
+        from secondwind.core.dialog import KEEP
+        col = self._doc(user_id).collection("dialog")
+        col.add(entry)
+        for old in list(col.order_by("at", direction=self._fs.Query.DESCENDING).offset(KEEP).stream()):
+            old.reference.delete()
+
+    def get_dialog(self, user_id):
+        return [d.to_dict() for d in self._doc(user_id).collection("dialog").order_by("at").stream()]
 
     def get_identity(self, key):
         snap = self.db.collection("identities").document(key).get()
