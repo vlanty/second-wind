@@ -212,3 +212,14 @@ def test_a_block_cannot_be_closed_from_inside():
     for tag in ("athlete", "data", "question"):
         assert content.count(f"<{tag}>") == 1 and content.count(f"</{tag}>") == 1
     assert content.rstrip().endswith("</question>")
+
+
+@pytest.mark.parametrize("label", ["fact.metric", "fact.run_distance", "fact.last_workout", "calc.zones"])
+def test_a_why_question_is_never_cut_down_to_a_bare_fact(label):
+    """2026-11-28: the classifier labelled "почему у меня вырос пульс покоя?" as fact.metric. With a
+    named day that would have answered a "why" with a number."""
+    for text in ("почему у меня сегодня вырос пульс покоя?", "что делать, если вчера мало спал",
+                 "why did I run so little last week", "нормальные ли у меня зоны?"):
+        assert scope.scope_route(scope.Verdict(label), text, "ru", date(2026, 11, 28)).kind == "model", text
+    r = scope.scope_route(scope.Verdict("fact.metric"), "какой пульс покоя сегодня", "ru", date(2026, 11, 28))
+    assert r.kind == "intent"

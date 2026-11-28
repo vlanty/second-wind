@@ -90,3 +90,8 @@ def test_persona_tells_the_model_to_refuse_role_changes():
 
 def test_persona_is_the_second_line_for_emergencies():
     assert "do not coach" in a.PERSONA and "112" in a.PERSONA and "chest pain" in a.PERSONA
+
+
+def test_the_athletes_gender_is_not_guessed():
+    """2026-11-28: an answer said «ты прошла»; the profile has no gender."""
+    assert "gender is not known" in a.PERSONA and "«ты прошла»" in a.PERSONA

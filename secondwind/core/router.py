@@ -77,6 +77,14 @@ def is_red_flag(text: str) -> bool:
     return lang is not None and _filter_key(text, lang, only=RED_FLAG) is not None
 
 
+def asks_for_analysis(text: str) -> bool:
+    """The message asks why, what to do, whether it is normal, ... (router.yaml `to_model`):
+    it needs the model even if it also names a fact."""
+    text = _normalize(text)
+    lang = detect_lang(text)
+    return lang is not None and _any(_rules()[1][lang], text)
+
+
 def _normalize(text: str | None) -> str:
     return (text or "").strip().replace("\u2019", "'").replace("ё", "е").replace("Ё", "Е")
 
