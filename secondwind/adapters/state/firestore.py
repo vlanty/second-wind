@@ -5,6 +5,7 @@ Layout:
   users/{user_id}/goals/active     the current goal (one at a time)
   users/{user_id}/usage/{YYYY-MM}  calls, input_tokens, output_tokens, cost_usd
   users/{user_id}/dialog/{auto}    q, a, at: the last dialog exchanges (core/dialog.py)
+  users/{user_id}/answers/{key}    text, at: the answer cache (core/answer_cache.py)
   identities/{provider:id}         user_id   (e.g. identities/telegram:123)
 """
 
@@ -83,6 +84,18 @@ class FirestoreStore:
 
     def get_dialog(self, user_id):
         return [d.to_dict() for d in self._doc(user_id).collection("dialog").order_by("at").stream()]
+
+    def get_cached_answer(self, user_id, key):
+        snap = self._doc(user_id).collection("answers").document(key).get()
+        return (snap.to_dict() or {}).get("text") if snap.exists else None
+
+    def put_cached_answer(self, user_id, key, text):
+        from datetime import datetime, timezone
+        from secondwind.core.answer_cache import KEEP
+        col = self._doc(user_id).collection("answers")
+        col.document(key).set({"text": text, "at": datetime.now(timezone.utc).isoformat()})
+        for old in list(col.order_by("at", direction=self._fs.Query.DESCENDING).offset(KEEP).stream()):
+            old.reference.delete()
 
     def get_identity(self, key):
         snap = self.db.collection("identities").document(key).get()

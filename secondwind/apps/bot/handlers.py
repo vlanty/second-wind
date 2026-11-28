@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import threading
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any
@@ -21,7 +22,8 @@ from secondwind.core.freshness import stale_warnings
 from secondwind.core.guard import (budget_allowed, forget_message, is_repeat, model_allowed, record_message,
                                    record_model_call, record_spend)
 from secondwind.core.router import Route, is_red_flag, route as route_message
-from secondwind.core import dialog
+from secondwind.core import answer_cache, dialog
+from secondwind.core.assistant import FORMAT_NOTE, PERSONA
 from secondwind.core.scope import ERROR as SCOPE_ERROR, Verdict, check, scope_route
 from secondwind.core.ports import LLM, DataReader, StateStore
 from secondwind.core import analytics
@@ -356,6 +358,25 @@ async def on_button(update: Update, ctx: ContextTypes.DEFAULT_TYPE | None):
         await _send_compare(update, rest)
     elif kind == "chart" and rest in charts.CHARTS:
         await _send_chart(update, rest)
+    elif kind == "more":
+        await _on_more(update, rest)
+
+
+async def _on_more(update: Update, entry_id: str):
+    """The same question again, in detail, one model tier up; the button is used once."""
+    query = update.callback_query
+    try:
+        if query is not None:
+            await query.edit_message_reply_markup(reply_markup=None)
+    except BadRequest as e:
+        logger.info("button not removed: %s", e)
+    entries = await _io(_recent_dialog, update)
+    i = next((n for n, e in enumerate(entries) if e.get("id") == entry_id), None)
+    if i is None:
+        await _reply(update, t(await _alang(update), "more.expired"))
+        return
+    earlier = dialog.block(entries[:i]) if i else None
+    await _ai_reply(update, ASK_PROMPT, "more", "chat", detail=True, question=entries[i]["q"], dialog=earlier)
 
 
 # ---------- analytics without AI ----------
@@ -599,14 +620,21 @@ async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE | None):
 
 # ---------- AI ----------
 
-async def _send_ai_text(update: Update, markdown: str):
-    """Claude's Markdown -> Telegram HTML, split to fit; plain text if Telegram rejects the markup."""
-    for chunk in split_message(md_to_html(markdown)):
+async def _send_ai_text(update: Update, markdown: str, markup=None):
+    """Claude's Markdown -> Telegram HTML, split to fit; plain text if Telegram rejects the markup.
+    `markup` (buttons) goes under the last part."""
+    chunks = split_message(md_to_html(markdown))
+    for i, chunk in enumerate(chunks):
+        kw = {"reply_markup": markup} if markup is not None and i == len(chunks) - 1 else {}
         try:
-            await _reply(update, chunk, parse_mode="HTML")
+            await _reply(update, chunk, parse_mode="HTML", **kw)
         except BadRequest as e:
             logger.warning("HTML rejected by Telegram (%s), sending this part as plain text", e)
-            await _reply(update, html_to_plain(chunk))
+            await _reply(update, html_to_plain(chunk), **kw)
+
+
+def _more_button(lang: str, entry_id: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([[InlineKeyboardButton(t(lang, "btn.more"), callback_data=f"more:{entry_id}")]])
 
 
 def _record_usage(update: Update, answer) -> None:
@@ -661,20 +689,24 @@ async def _edit(msg, text: str, **kw) -> bool:
         return False
 
 
-async def _finish(update: Update, placeholder, markdown: str):
+async def _finish(update: Update, placeholder, markdown: str, markup=None):
     """Replace the live message with the formatted answer; the rest goes in new messages."""
     chunks = split_message(md_to_html(markdown))
-    if not await _edit(placeholder, chunks[0], parse_mode="HTML"):
-        await _edit(placeholder, html_to_plain(chunks[0]))
-    for chunk in chunks[1:]:
+    last = len(chunks) - 1
+    kw0 = {"reply_markup": markup} if markup is not None and last == 0 else {}
+    if not await _edit(placeholder, chunks[0], parse_mode="HTML", **kw0):
+        await _edit(placeholder, html_to_plain(chunks[0]), **kw0)
+    for i, chunk in enumerate(chunks[1:], 1):
+        kw = {"reply_markup": markup} if markup is not None and i == last else {}
         try:
-            await _reply(update, chunk, parse_mode="HTML")
+            await _reply(update, chunk, parse_mode="HTML", **kw)
         except BadRequest as e:
             logger.warning("HTML rejected by Telegram (%s), sending this part as plain text", e)
-            await _reply(update, html_to_plain(chunk))
+            await _reply(update, html_to_plain(chunk), **kw)
 
 
-async def _ai_reply(update: Update, prompt: str, label: str, task: str, **fmt):
+async def _ai_reply(update: Update, prompt: str, label: str, task: str, detail: bool = False,
+                    cache_key: str | None = None, **fmt):
     user = await _io(_user, update)
     lang = _lang(update, user)
     mode = (user.get("settings") or {}).get("mode", DEFAULT_MODE)
@@ -701,7 +733,7 @@ async def _ai_reply(update: Update, prompt: str, label: str, task: str, **fmt):
         athlete, context = await athlete_job, await context_job
         job = asyncio.ensure_future(_io(lambda: analyze(_llm(), prompt, context, task, lang, mode=mode,
                                                         athlete=athlete, on_text=on_text if live else None,
-                                                        **fmt)))
+                                                        detail=detail, **fmt)))
         shown = ""
         while not job.done():
             await asyncio.wait({job}, timeout=EDIT_EVERY_S)
@@ -725,12 +757,14 @@ async def _ai_reply(update: Update, prompt: str, label: str, task: str, **fmt):
         if not text:
             await say(t(lang, "ai.error"))
             return
+        entry_id = await _io(_remember, update, fmt["question"], text) if ask and fmt.get("question") else None
+        markup = _more_button(lang, entry_id) if entry_id and not detail else None
         if live:
-            await _finish(update, placeholder, text)
+            await _finish(update, placeholder, text, markup)
         else:
-            await _send_ai_text(update, text)
-        if ask and fmt.get("question"):
-            await _io(_remember, update, fmt["question"], text)
+            await _send_ai_text(update, text, markup)
+        if ask and not detail and not fmt.get("dialog") and cache_key:
+            await _io(_cache_answer, update, cache_key, text)
     except Refused as e:
         logger.warning("Claude refused: %s", e)
         await say(t(lang, "ai.refused"))
@@ -780,6 +814,8 @@ async def on_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE | None):
     if await _reply_without_model(update, r, user, question):
         return
     history = await _io(_recent_dialog, update)
+    # Read alongside the classifier: the answer cache key needs the data version.
+    version_job = asyncio.ensure_future(_io(_data_version, update))
     # Nothing reaches the answering model unless the classifier recognized it as on topic.
     verdict = await _io(_scope_check, update, question, dialog.previous_questions(history))
     if verdict.follow_up and verdict.question != question:
@@ -789,11 +825,67 @@ async def on_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE | None):
         question = verdict.question
         r = route_message(question, r.lang, date.today())
         if r.kind == "filter" and await _reply_without_model(update, r, user, question):
+            version_job.cancel()
             return
     if await _reply_without_model(update, scope_route(verdict, question, r.lang), user, question):
+        version_job.cancel()
         return
-    await _ai_reply(update, ASK_PROMPT, "ask", "chat", question=question,
-                    dialog=dialog.block(history) if verdict.follow_up and history else None)
+    follow = verdict.follow_up and bool(history)
+    version = await version_job
+    key = None if follow else await _io(_answer_key, update, user, question, r.lang, version)
+    cached = await _io(_cached_answer, update, key) if key else None
+    logger.info("question fp=%s cache=%s", answer_cache.fingerprint(_uid(update), question),
+                "skip" if key is None else ("hit" if cached else "miss"))
+    if cached:
+        entry_id = await _io(_remember, update, question, cached)
+        await _send_ai_text(update, cached, _more_button(_lang(update, user), entry_id) if entry_id else None)
+        return
+    await _ai_reply(update, ASK_PROMPT, "ask", "chat", cache_key=key, question=question,
+                    dialog=dialog.block(history) if follow else None)
+
+
+ANSWER_CACHE_KEEP = answer_cache.KEEP
+# Part of the answer cache key: a changed prompt means new answers.
+PROMPT_VERSION = hashlib.sha256((ASK_PROMPT + PERSONA + FORMAT_NOTE).encode()).hexdigest()[:12]
+
+
+def _data_version(update: Update) -> str:
+    """Changes with every successful sync; "" when unknown (then nothing is cached)."""
+    try:
+        times = [r["last_success_at"] for r in _bq(update).get_source_status() if r.get("last_success_at")]
+        return max(times).isoformat() if times else ""
+    except Exception as e:  # noqa: BLE001
+        logger.error("data version read failed: %s", e)
+        return ""
+
+
+def _answer_key(update: Update, user: dict, question: str, lang: str, version: str | None = None) -> str | None:
+    version = _data_version(update) if version is None else version
+    if not version:
+        return None
+    try:
+        goal = _store().get_goal(_uid(update))
+    except Exception:  # noqa: BLE001
+        return None
+    return answer_cache.key(_uid(update), question, lang=lang,
+                            mode=(user.get("settings") or {}).get("mode", DEFAULT_MODE), data_version=version,
+                            profile=user.get("profile") or {}, goal=goal, day=date.today().isoformat(),
+                            prompt_version=PROMPT_VERSION)
+
+
+def _cached_answer(update: Update, key: str) -> str | None:
+    try:
+        return _store().get_cached_answer(_uid(update), key)
+    except Exception as e:  # noqa: BLE001
+        logger.error("answer cache read failed: %s", e)
+        return None
+
+
+def _cache_answer(update: Update, key: str, text: str) -> None:
+    try:
+        _store().put_cached_answer(_uid(update), key, text)
+    except Exception as e:  # noqa: BLE001
+        logger.error("answer cache write failed: %s", e)
 
 
 REMEMBERED_FILTERS = ("filter.red_flag", "filter.emergency", "filter.crisis")   # the next answer must know
@@ -807,11 +899,15 @@ def _recent_dialog(update: Update) -> list[dict]:
         return []
 
 
-def _remember(update: Update, question: str, answer: str) -> None:
+def _remember(update: Update, question: str, answer: str) -> str | None:
+    """Save the exchange; its id is what the "More" button refers to."""
+    e = dialog.entry(question, html_to_plain(answer), datetime.now(timezone.utc))
     try:
-        _store().add_dialog(_uid(update), dialog.entry(question, html_to_plain(answer), datetime.now(timezone.utc)))
-    except Exception as e:  # noqa: BLE001
-        logger.error("dialog write failed: %s", e)
+        _store().add_dialog(_uid(update), e)
+        return e["id"]
+    except Exception as ex:  # noqa: BLE001
+        logger.error("dialog write failed: %s", ex)
+        return None
 
 
 async def _reply_without_model(update: Update, r: Route, user: dict, question: str | None = None) -> bool:
@@ -907,6 +1003,37 @@ def _guarded_route(update: Update, user: dict, text: str, now: datetime) -> Rout
     return r
 
 
+def _period_label(lang: str, p: dict) -> str:
+    if p["period"] == "month_name":
+        name = t(lang, f"month.in.{p['month']}") + (f" {p['year']}" if p["year"] != date.today().year else "")
+        return t(lang, "fast.period.month_name", name=name)
+    return t(lang, f"fast.period.{p['period']}")
+
+
+STAT_COLUMNS = {"resting_hr": "resting_hr", "hrv": "hrv_last_night", "sleep": "sleep_seconds", "steps": "steps",
+                "stress": "stress_avg", "body_battery": "body_battery_high"}
+
+
+def _period_stats(update: Update, lang: str, p: dict) -> str:
+    """Average, lowest and highest daily value of one metric over a period."""
+    metric = p["metric"]
+    values = [r[STAT_COLUMNS[metric]] for r in _bq(update).get_health_period(p["start"], p["end"])
+              if r.get(STAT_COLUMNS[metric]) is not None]
+    name, period = t(lang, f"stat.name.{metric}"), _period_label(lang, p)
+    fields = dict(name=name, period=period, start=_d(p["start"]), end=_d(p["end"]))
+    if not values:
+        return t(lang, "fast.stats.none", **fields)
+    avg = sum(values) / len(values)
+    if metric == "sleep":
+        f = lambda v: _hm(v, lang)  # noqa: E731
+    elif metric in ("resting_hr", "hrv"):
+        f = lambda v: f"{v:.1f}".rstrip("0").rstrip(".")  # noqa: E731
+    else:
+        f = lambda v: f"{v:.0f}"  # noqa: E731
+    return t(lang, "fast.stats", **fields, avg=f(avg), lo=f(min(values)), hi=f(max(values)),
+             unit=t(lang, f"stat.unit.{metric}"), n=len(values))
+
+
 RIEGEL = 1.06
 
 
@@ -934,17 +1061,24 @@ def _fast_answer(update: Update, r: Route, user: dict) -> tuple[str, dict] | Non
         return analytics.render_records(lang, _bq(update).get_records(date.today() - timedelta(days=365))), html
     if r.key == "fact.run_distance":
         per = _bq(update).get_period(p["start"], p["end"])
-        if p["period"] == "month_name":
-            name = t(lang, f"month.in.{p['month']}") + (f" {p['year']}" if p["year"] != date.today().year else "")
-            period = t(lang, "fast.period.month_name", name=name)
-        else:
-            period = t(lang, f"fast.period.{p['period']}")
-        fields = dict(period=period, start=_d(p["start"]), end=_d(p["end"]))
+        fields = dict(period=_period_label(lang, p), start=_d(p["start"]), end=_d(p["end"]))
         if not per.get("runs"):
             return t(lang, "fast.run_none", **fields), html
         return t(lang, "fast.run_distance", km=f"{per['run_km']:.1f}", runs=per["runs"], **fields), html
     if r.key == "fact.metric":
+        if p.get("stats"):
+            return _period_stats(update, lang, p), html
         return _fast_metric(update, lang, p["metric"], p["date"]), html
+    if r.key in ("calc.readiness", "fact.load"):
+        bq = _bq(update)
+        with ThreadPoolExecutor(2) as pool:                      # two independent queries at once
+            health_q, loads_q = pool.submit(bq.get_health_last_days, 4), pool.submit(bq.get_load_last_days, 1)
+        health, loads = health_q.result(), loads_q.result()
+        load = loads[-1] if loads else None
+    if r.key == "calc.readiness":
+        return _estimates(health, load, lang), {}
+    if r.key == "fact.load":
+        return _fmt_load(load, lang) + "\n" + training_status(load, health, lang=lang).text(t(lang, "est.status")), {}
     if r.key == "calc.zones":
         inputs = _athlete_inputs(update)
         z = compute_zones(user.get("profile") or {}, inputs, inputs.get("resting_hr_7d"))

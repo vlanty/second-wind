@@ -37,6 +37,14 @@ def _mode_switched(task: str, mode: str) -> bool:
     return task in MODE_TASKS and mode in MODE_TIERS
 
 
+MORE_TIERS: dict[str, Tier] = {"economy": "medium", "normal": "large", "max": "large"}
+
+
+def more_tier(mode: str = DEFAULT_MODE) -> Tier:
+    """The "More" button asks one tier up from the user's mode (the top tier stays on top)."""
+    return MORE_TIERS.get(mode, "large")
+
+
 def tier_for(task: str, mode: str = DEFAULT_MODE) -> Tier:
     return MODE_TIERS[mode] if _mode_switched(task, mode) else TASKS[task][0]
 

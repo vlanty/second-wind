@@ -16,6 +16,12 @@ intents:
   - intent: calc.zones
     ru: ['\b(какие|покажи|напомни)\W+(\w+\W+){0,3}зоны\b', '^\W*(мои )?(пульсов\w* )?зоны( пульса)?\W*$']
     en: ['\b(what are my|show( me)?( my)?)\W+(\w+\W+){0,2}zones\b', '^\W*(my )?(heart ?rate |hr )?zones\W*$']
+  - intent: calc.readiness      # today, with no condition; "ready for Sunday's long run?" needs the model
+    ru: ['^\W*(я\s+)?(готов|готова)\w*(\s+ли)?(\s+я)?(\s+сегодня)?(\s+(к\s+)?(тренировк\w*|тренироваться|нагрузк\w*|бегать|пробежк\w*))?(\s+сегодня)?\W*$', '^\W*(какая|какой)\s+(у меня\s+)?(сегодня\s+)?готовност\w*(\s+сегодня)?\W*$']
+    en: ['^\W*am i ready(\s+to\s+(train|run|work out|exercise))?(\s+today)?\W*$', "^\\W*(what'?s|what is|how is)\\s+my\\s+readiness(\\s+today)?\\W*$"]
+  - intent: fact.load
+    ru: ['^\W*(как|какая|какая у меня|как у меня)\s+(у меня\s+)?(моя\s+)?(тренировочн\w*\s+)?нагрузк\w*(\s+сейчас|\s+сегодня)?\W*$']
+    en: ["^\\W*(what'?s|what is|how is|how'?s)\\s+my\\s+(training\\s+)?load(\\s+(now|today))?\\W*$"]
   - intent: fact.records
     ru: ['(мои |какие |покажи )?рекорд\w*', 'лучш\w+ (время|результат)\w* на (\d|марафон|полумарафон)']
     en: ['\bpersonal (records?|bests?)\b', '\b(my|show|what are my)\W+(\w+\W+){0,2}(records?|bests|prs?|pbs?)\b']
@@ -26,5 +32,5 @@ intents:
     ru: ['сколько\W+(\w+\W+){0,3}(пробежал|набегал|км)', 'какой (у меня )?(объ[её]м|километраж)']
     en: ['how (far|many (km|kilometers|kilometres)|much) (\w+\W+){0,2}(run|ran)', '(running )?(mileage|volume|distance) (this|last)']
   - intent: fact.metric
-    ru: ['(какой|какая|какое|какие|сколько|покажи|скажи)\W+(\w+\W+){0,4}(пульс\w* (в )?поко|чсс поко|hrv|вариабельн|сон|спал|шаг|body battery|батаре|стресс|vo2|мпк)']
-    en: ['(what|how much|how many|how long|show|tell)\W+(\w+\W+){0,4}(resting (heart rate|hr)|\brhr\b|hrv|sleep|slept|steps|body battery|stress|vo2)']
+    ru: ['\b(какой|какая|какое|какие|сколько|покажи|скажи)\W+(\w+\W+){0,4}(пульс\w* (в )?поко|чсс поко|hrv|вариабельн|сон|спал|шаг|body battery|батаре|стресс|vo2|мпк)', 'как\s+(я\s+)?спал\w*', '(средн\w*|в среднем)\W+(\w+\W+){0,3}(пульс\w* (в )?поко|чсс поко|hrv|вариабельн|сон|сна|шаг|стресс|body battery|батаре)']
+    en: ['(what|how much|how many|how long|show|tell)\W+(\w+\W+){0,4}(resting (heart rate|hr)|\brhr\b|hrv|sleep|slept|steps|body battery|stress|vo2)', 'how did i sleep', 'average\W+(\w+\W+){0,3}(resting (heart rate|hr)|\brhr\b|hrv|sleep|steps|stress|body battery)']

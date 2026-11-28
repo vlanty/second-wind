@@ -31,7 +31,7 @@ def test_a_named_month_is_answered_without_the_model(text, start, end):
 
 @pytest.mark.parametrize("text", ["сколько я пробежал 12 ноября", "сколько я пробежал с октября",
                                   "сколько я пробежал в октябре и ноябре", "how far did I run since october",
-                                  "какой пульс покоя был в октябре", "сколько я пробежал в октябре прошлого года"])
+                                  "сколько я пробежал в октябре прошлого года"])
 def test_other_month_wording_still_goes_to_the_model(text):
     assert route(text, "ru", TODAY).kind == "model"
 

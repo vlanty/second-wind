@@ -52,9 +52,10 @@ def test_request_body_and_answer(monkeypatch):
     assert body["model"] == S and body["max_tokens"] == 3000 and body["output_config"] == {"effort": "low"}
     assert body["fallbacks"] == "default" and body["betas"] == ["server-side-fallback-2026-07-01"]
     (msg,) = body["messages"]
-    assert msg["role"] == "user" and "как я?" in msg["content"] and "DATA" in msg["content"]
+    text = "".join(b["text"] for b in msg["content"])
+    assert msg["role"] == "user" and "как я?" in text and "DATA" in text
     (system,) = body["system"]
-    assert "in Russian" in system["text"] and a.GOAL_NOTE in msg["content"] and "timeout" not in body
+    assert "in Russian" in system["text"] and a.GOAL_NOTE in text and "timeout" not in body
     assert ans.text == "ok" and ans.input_tokens == 1000 and ans.cost_usd == pytest.approx(0.003)
 
 
@@ -80,7 +81,7 @@ def test_prompt_files_use_only_known_fields():
     allowed = {"persona", "format", "language"}
     for name in ("coach", "health", "nutrition", "ask"):
         fields = {f for _, f, _, _ in string.Formatter().parse(a.load_prompt(name)) if f}
-        assert fields == allowed, name
+        assert fields - {"length"} == allowed and ("length" in fields) is (name == "ask"), name
     assert "Vita" in a.PERSONA and not a.PERSONA.endswith("\n")
 
 

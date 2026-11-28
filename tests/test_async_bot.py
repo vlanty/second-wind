@@ -17,7 +17,8 @@ SLOW = 0.4
 # Calls that wait for BigQuery, Firestore, the AI model or render charts.
 BLOCKING = {"_bq", "_store", "_llm", "_user", "_athlete_inputs", "_context", "_fast_answer", "_scope_check",
             "_guarded_route", "analyze", "classify", "handle_input", "apply_setting", "render", "_record_usage", "_fast_metric", "_race_prediction", "_athlete",
-            "_today_data", "_remember", "_recent_dialog"}
+            "_today_data", "_remember", "_recent_dialog",
+            "_answer_key", "_cached_answer", "_cache_answer", "_data_version"}
 
 
 def _calls_in(node):

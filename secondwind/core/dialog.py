@@ -5,6 +5,7 @@ off-topic text or an attempt to change the instructions never becomes part of a 
 
 from __future__ import annotations
 
+import hashlib
 from datetime import datetime, timedelta
 
 KEEP = 3                        # exchanges (question + answer): about the agreed "last 5 messages"
@@ -14,7 +15,8 @@ ANSWER_CHARS = 1500             # an answer is cut to this length in the prompt
 
 
 def entry(question: str, answer: str, now: datetime) -> dict:
-    return {"q": question, "a": answer, "at": now.isoformat()}
+    at = now.isoformat()
+    return {"q": question, "a": answer, "at": at, "id": hashlib.sha256(f"{at}|{question}".encode()).hexdigest()[:10]}
 
 
 def recent(entries: list[dict], now: datetime) -> list[dict]:

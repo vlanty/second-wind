@@ -17,7 +17,8 @@ class MemoryStore:
 
     def get_user(self, user_id):
         u = copy.deepcopy(self.users.get(user_id, {}))
-        u.pop("dialog", None)          # kept apart, like the Firestore subcollection
+        u.pop("dialog", None)          # kept apart, like the Firestore subcollections
+        u.pop("answers", None)
         return u
 
     def update_profile(self, user_id, fields):
@@ -70,6 +71,17 @@ class MemoryStore:
 
     def get_dialog(self, user_id):
         return copy.deepcopy(self.users.get(user_id, {}).get("dialog", []))
+
+    def get_cached_answer(self, user_id, key):
+        return self.users.get(user_id, {}).get("answers", {}).get(key)
+
+    def put_cached_answer(self, user_id, key, text):
+        from secondwind.core.answer_cache import KEEP
+        answers = self._user(user_id).setdefault("answers", {})
+        answers.pop(key, None)
+        answers[key] = text                       # dicts keep insertion order: oldest first
+        for old in list(answers)[:-KEEP]:
+            del answers[old]
 
     def get_identity(self, key):
         return self.identities.get(key)

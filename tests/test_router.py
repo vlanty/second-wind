@@ -32,7 +32,8 @@ def test_periods_and_metric_params():
     assert route("сколько км пробежал", "ru", TODAY).params["start"] == date(2026, 11, 16)   # default: this week
     r = route("какой пульс покоя вчера", "ru", TODAY)
     assert r.params == {"metric": "resting_hr", "period": "yesterday", "date": date(2026, 11, 19)}
-    assert route("сколько шагов за месяц", "ru", TODAY).key == "model"       # a trend over a period = analysis
+    r = route("сколько шагов за месяц", "ru", TODAY)                         # a period: average, lowest, highest
+    assert r.key == "fact.metric" and r.params["stats"] and r.params["start"] == date(2026, 11, 1)
     assert period_dates("last_week", TODAY) == (date(2026, 11, 9), date(2026, 11, 15))
 
 

@@ -133,6 +133,12 @@ class BigQueryReader:
                        f"FROM `{self.prefix}.v_daily_health` WHERE user_id = @uid AND date > @since ORDER BY date",
                        since=date.today() - timedelta(days=days))
 
+    def get_health_period(self, start: date, end: date) -> list[dict]:
+        """Daily values for period statistics (average, lowest, highest)."""
+        return self._q(f"SELECT date, resting_hr, hrv_last_night, sleep_seconds, deep_sleep_seconds, sleep_score, "
+                       f"steps, stress_avg, body_battery_high FROM `{self.prefix}.v_daily_health` "
+                       f"WHERE user_id = @uid AND date BETWEEN @start AND @end ORDER BY date", start=start, end=end)
+
     def get_run_efficiency(self, days: int = 180) -> list[dict]:
         """Per run: metres per heartbeat (speed / HR). Higher = more economical at the same effort."""
         return self._q(f"""
