@@ -49,7 +49,7 @@ def test_request_body_and_answer(monkeypatch):
     client = FakeClient()
     ans = a.analyze(ClaudeLLM(client=client), a.ASK_PROMPT, "DATA", "chat", "ru", question="как я?")
     (body,) = client.calls
-    assert body["model"] == S and body["max_tokens"] == 16000 and body["output_config"] == {"effort": "low"}
+    assert body["model"] == S and body["max_tokens"] == 3000 and body["output_config"] == {"effort": "low"}
     assert body["fallbacks"] == "default" and body["betas"] == ["server-side-fallback-2026-07-01"]
     (msg,) = body["messages"]
     assert msg["role"] == "user" and "как я?" in msg["content"] and "DATA" in msg["content"]

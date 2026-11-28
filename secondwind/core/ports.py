@@ -7,6 +7,7 @@ another cloud or AI vendor means a new adapter, not changes in the core.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date
 from typing import Literal, Protocol
@@ -114,3 +115,7 @@ class LLMResponse:
 
 class LLM(Protocol):
     def complete(self, req: LLMRequest) -> LLMResponse: ...
+
+    def stream(self, req: LLMRequest, on_text: Callable[[str], None]) -> LLMResponse:
+        """Like complete(), calling on_text with each piece of text as it is written."""
+        ...

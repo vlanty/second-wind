@@ -27,6 +27,7 @@ class BotConfig(BaseModel):
     telegram_chat_id: str = Field("", alias="TELEGRAM_CHAT_ID", pattern=r"^(-?\d+)?$")
     owner_user_id: str = Field("", alias="OWNER_USER_ID")
     model_calls_per_hour: int = Field(20, alias="MODEL_CALLS_PER_HOUR", ge=1, le=1000)
+    daily_budget_usd: float = Field(1.0, alias="DAILY_BUDGET_USD", gt=0, le=1000)
     bot_language: Literal["ru", "en"] | None = Field(None, alias="BOT_LANGUAGE")
     data_sources: list[str] = Field(default_factory=list, alias="DATA_SOURCES")
 
