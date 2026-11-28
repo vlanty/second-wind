@@ -13,7 +13,7 @@ from secondwind.adapters.warehouse.bigquery_reader import BigQueryReader
 from secondwind.core.assistant import ASK_PROMPT, COACH_PROMPT, HEALTH_PROMPT, NUTRITION_PROMPT, Refused, analyze
 from secondwind.core.freshness import stale_warnings
 from secondwind.core.guard import is_repeat, model_allowed, record_message, record_model_call
-from secondwind.core.router import Route, route as route_message
+from secondwind.core.router import Route, is_red_flag, route as route_message
 from secondwind.core.ports import LLM, DataReader, StateStore
 from secondwind.core import analytics
 from secondwind.apps.bot import charts, tenancy
@@ -612,7 +612,7 @@ async def on_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     user = _user(update)
     pending = user.get("pending")
-    if pending:
+    if pending and not is_red_flag(update.message.text):   # an emergency is never taken as form input
         lang = _lang(update, user)
         try:
             watch = _athlete_inputs(update) if pending.get("kind") == "profile" else None
