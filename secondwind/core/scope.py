@@ -19,7 +19,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 from secondwind.core.assistant import load_prompt
 from secondwind.core.models import effort_for, model_override, tier_for
 from secondwind.core.ports import LLM, Block, LLMRequest, LLMResponse
-from secondwind.core.router import FLAGS, MONTH, PERIODS, Route, extract
+from secondwind.core.router import FLAGS, MONTH, PERIODS, Route, asks_for_analysis, extract
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +80,8 @@ def scope_route(verdict: Verdict, text: str, lang: str, today: date | None = Non
     """What to do with a classified message: a fixed text, an existing handler or the model."""
     label = verdict.label
     if label in ON_TOPIC:
+        return Route("model", "model", lang)
+    if label in INTENTS and asks_for_analysis(text):   # "why ...": never a bare number
         return Route("model", "model", lang)
     if label in INTENTS:
         named = any(re.search(p, text, FLAGS) for p, _ in PERIODS) or MONTH.search(text) is not None
