@@ -19,7 +19,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 from secondwind.core.assistant import load_prompt
 from secondwind.core.models import effort_for, model_override, tier_for
 from secondwind.core.ports import LLM, Block, LLMRequest, LLMResponse
-from secondwind.core.router import FLAGS, PERIODS, Route, extract
+from secondwind.core.router import FLAGS, MONTH, PERIODS, Route, extract
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +82,7 @@ def scope_route(verdict: Verdict, text: str, lang: str, today: date | None = Non
     if label in ON_TOPIC:
         return Route("model", "model", lang)
     if label in INTENTS:
-        named = any(re.search(p, text, FLAGS) for p, _ in PERIODS)
+        named = any(re.search(p, text, FLAGS) for p, _ in PERIODS) or MONTH.search(text) is not None
         if label in NEEDS_PERIOD and not named:      # no default period here: the model reads the question
             return Route("model", "model", lang)
         params = extract(label, text, lang, today or date.today())

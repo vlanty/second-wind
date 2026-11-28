@@ -212,7 +212,8 @@ def _context(bq: DataReader) -> str:
     month_start = today.replace(day=1)
     prev_end = month_start - timedelta(days=1)
     try:
-        month = analytics.month_note(bq.get_period(month_start, today), bq.get_period(prev_end.replace(day=1), prev_end))
+        month = analytics.month_note(bq.get_period(month_start, today), bq.get_period(prev_end.replace(day=1), prev_end),
+                                     today)
         records = analytics.records_note(bq.get_records(today - timedelta(days=365)))
     except Exception as e:  # noqa: BLE001 - extra context must not block the answer
         logger.error("analytics context failed: %s", e)
@@ -797,7 +798,12 @@ def _fast_answer(update: Update, r: Route, user: dict) -> tuple[str, dict] | Non
         return analytics.render_records(lang, _bq(update).get_records(date.today() - timedelta(days=365))), html
     if r.key == "fact.run_distance":
         per = _bq(update).get_period(p["start"], p["end"])
-        fields = dict(period=t(lang, f"fast.period.{p['period']}"), start=_d(p["start"]), end=_d(p["end"]))
+        if p["period"] == "month_name":
+            name = t(lang, f"month.in.{p['month']}") + (f" {p['year']}" if p["year"] != date.today().year else "")
+            period = t(lang, "fast.period.month_name", name=name)
+        else:
+            period = t(lang, f"fast.period.{p['period']}")
+        fields = dict(period=period, start=_d(p["start"]), end=_d(p["end"]))
         if not per.get("runs"):
             return t(lang, "fast.run_none", **fields), html
         return t(lang, "fast.run_distance", km=f"{per['run_km']:.1f}", runs=per["runs"], **fields), html
