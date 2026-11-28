@@ -187,10 +187,16 @@ def records_note(rows: list[dict]) -> str:
     return "; ".join(f"{names.get(r['d'], r['d'])} {fmt_duration(round(r['secs']))} ({r['activity_date']})" for r in best)
 
 
-def month_note(cur: dict, prev: dict) -> str:
+MONTH_NAMES = ("January", "February", "March", "April", "May", "June", "July", "August", "September", "October",
+               "November", "December")
+
+
+def month_note(cur: dict, prev: dict, today: date) -> str:
     def one(p):
         pace = _pace(p)
         return (f"{p.get('n') or 0} workouts, {_hours(p.get('secs'))} h, {p.get('runs') or 0} runs "
                 f"{_num(p.get('run_km')):.1f} km" + (f" at {fmt_pace(pace)}/km" if pace else "")
                 + (f", run HR {p['run_hr']:.0f}" if p.get("run_hr") else "") + f", load {_num(p.get('load')):.0f}")
-    return f"this month so far: {one(cur)}; previous month (whole): {one(prev)}"
+    last = today.replace(day=1) - timedelta(days=1)
+    return (f"{MONTH_NAMES[today.month - 1]} {today.year} (1–{today.day}, so far): {one(cur)}; "
+            f"{MONTH_NAMES[last.month - 1]} {last.year} (whole month): {one(prev)}")

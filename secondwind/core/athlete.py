@@ -134,15 +134,16 @@ class Zones:
 
 def watch_zones(row: dict | None) -> Zones | None:
     """Zones from the latest activity's .FIT (bq_reader.get_athlete_inputs row)."""
+    row = row or {}
     try:
-        bounds = [int(x) for x in (row or {}).get("hr_zone_bounds", "").split(",") if x.strip()]
+        bounds = [int(x) for x in row.get("hr_zone_bounds", "").split(",") if x.strip()]
     except (AttributeError, ValueError):
         return None
     if len(bounds) < 6 or bounds[:6] != sorted(bounds[:6]):
         return None
     as_of = row.get("zones_date")
     return Zones([(bounds[i - 1], bounds[i]) for i in range(1, 6)], "watch", row.get("hr_zone_calc"),
-                 row.get("lthr"), as_of.isoformat() if hasattr(as_of, "isoformat") else as_of,
+                 row.get("lthr"), as_of.isoformat() if as_of is not None and hasattr(as_of, "isoformat") else as_of,
                  running="running" in (row.get("zones_type") or ""))
 
 

@@ -86,7 +86,7 @@ def test_facts_use_the_existing_handlers_and_never_guess_a_period():
     sr = lambda label, text: scope.scope_route(scope.Verdict(label), text, "ru", today)  # noqa: E731
     r = sr("fact.run_distance", "сколько намотал в прошлом месяце")
     assert (r.kind, r.key) == ("intent", "fact.run_distance") and r.params["start"] == date(2026, 10, 1)
-    assert sr("fact.run_distance", "сколько намотал в октябре").kind == "model"
+    assert sr("fact.run_distance", "сколько намотал с октября").kind == "model"          # a range, not a month
     assert sr("fact.run_distance", "сколько я намотал").kind == "model"
     assert sr("fact.metric", "сколько я вчера прошёл шагов").params["metric"] == "steps"
     assert sr("fact.metric", "сколько я прошёл шагов в среду").kind == "model"
@@ -94,9 +94,9 @@ def test_facts_use_the_existing_handlers_and_never_guess_a_period():
     assert sr("calc.zones", "в каких границах мне бегать").key == "calc.zones"
 
 
-@pytest.mark.parametrize("text", ["сколько я пробежал в октябре", "сколько км я пробежал 12 ноября",
+@pytest.mark.parametrize("text", ["сколько я пробежал за осень", "сколько км я пробежал 12 ноября",
                                   "какой пульс покоя был в понедельник", "сколько я пробежал с начала лета",
-                                  "how far did I run in october", "what was my resting hr on monday"])
+                                  "how far did I run this autumn", "what was my resting hr on monday"])
 def test_rules_do_not_answer_for_a_period_they_cannot_read(text):
     assert route(text, "ru", date(2026, 11, 25)).kind == "model"
 

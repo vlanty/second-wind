@@ -193,6 +193,11 @@ def _fit_bytes(blob: bytes) -> bytes | None:
     return blob
 
 
+def _as_list(v) -> list:
+    """FIT fields hold a list, or a single value when there is one element."""
+    return v if isinstance(v, list) else [v]
+
+
 def _int(v):
     try:
         return int(v) if v is not None else None
@@ -221,7 +226,7 @@ def fit_to_model(user_id: str, session_id: str, local_date: str, blob: bytes) ->
     zone = next((m for m in tiz if m.get("reference_mesg") == "session"), tiz[0] if tiz else None)
     target = (msgs.get("zones_target_mesgs") or [{}])[0]
     if zone:
-        bounds = [b for b in (_int(x) for x in zone["hr_zone_high_boundary"]) if b]
+        bounds = [b for b in (_int(x) for x in _as_list(zone["hr_zone_high_boundary"])) if b]
         if len(bounds) >= 3 and bounds == sorted(bounds):
             calc = zone.get("hr_calc_type") or target.get("hr_calc_type")
             out.hr_zones.append({

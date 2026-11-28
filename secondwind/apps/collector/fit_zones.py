@@ -29,6 +29,11 @@ def _fit_bytes(blob: bytes) -> bytes | None:
     return blob
 
 
+def _as_list(v) -> list:
+    """FIT fields hold a list, or a single value when there is one element."""
+    return v if isinstance(v, list) else [v]
+
+
 def _int(v):
     try:
         return int(v) if v is not None else None
@@ -56,7 +61,7 @@ def extract_zones(blob: bytes) -> dict:
     target = (msgs.get("zones_target_mesgs") or [{}])[0]
     if not session:
         return {}
-    bounds = [b for b in (_int(x) for x in session["hr_zone_high_boundary"]) if b]
+    bounds = [b for b in (_int(x) for x in _as_list(session["hr_zone_high_boundary"])) if b]
     if len(bounds) < 3 or bounds != sorted(bounds):
         return {}
     calc = session.get("hr_calc_type") or target.get("hr_calc_type")

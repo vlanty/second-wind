@@ -56,8 +56,37 @@ def test_startup_logs_in_and_registers_the_menu(monkeypatch):
     async def fake_menu(bot):
         called.append("menu")
 
+    monkeypatch.setenv("GCP_PROJECT", "p")
+    monkeypatch.setenv("BQ_DATASET", "d")
     monkeypatch.setattr(main.tg, "initialize", fake_init)
     monkeypatch.setattr(main, "setup_menu", fake_menu)
     with TestClient(main.app) as c:
         assert c.get("/health").status_code == 200
     assert called == ["init", "menu"]
+
+
+def test_an_edited_message_is_not_taken_as_a_new_question():
+    """Found by the type checker: on_text read update.message, which is None for an edit."""
+    from telegram import Update
+    from telegram.ext import MessageHandler
+    msg = {"message_id": 1, "date": 0, "chat": {"id": 42, "type": "private"},
+           "from": {"id": 42, "is_bot": False, "first_name": "x"}, "text": "почему вырос пульс?"}
+    (text_handler,) = [h for group in main.tg.handlers.values() for h in group if isinstance(h, MessageHandler)]
+    assert text_handler.check_update(Update.de_json({"update_id": 1, "message": msg}, main.tg.bot))
+    assert not text_handler.check_update(Update.de_json({"update_id": 2, "edited_message": {**msg, "edit_date": 1}},
+                                                        main.tg.bot))
+
+
+def test_startup_stops_on_a_bad_setting(monkeypatch):
+    from secondwind.apps.bot.config import ConfigError
+
+    async def fake_init():
+        raise AssertionError("must not get this far")
+
+    monkeypatch.setattr(main.tg, "initialize", fake_init)
+    monkeypatch.setenv("GCP_PROJECT", "p")
+    monkeypatch.setenv("BQ_DATASET", "d")
+    monkeypatch.setenv("TENANCY", "Solo")
+    with pytest.raises(ConfigError, match="TENANCY"):
+        with TestClient(main.app):
+            pass

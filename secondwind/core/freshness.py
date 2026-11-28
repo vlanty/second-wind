@@ -18,7 +18,7 @@ def stale_warnings(status_rows: list[dict], enabled: list[str], lang: str = "en"
     for name in enabled:
         r = by_source.get(name)
         last = r.get("last_success_at") if r else None
-        if last is None:
+        if r is None or last is None:
             out.append(t(lang, "stale.never", source=name))
         elif now - last > STALE_AFTER:
             status = f" ({r['last_status']})" if r.get("last_status") not in (None, "ok") else ""

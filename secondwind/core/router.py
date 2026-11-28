@@ -88,7 +88,7 @@ def route(text: str, ui_lang: str = "en", today: date | None = None) -> Route:
     if not text:
         return Route("filter", "filter.empty", ui_lang)
     if is_red_flag(text):
-        return Route("filter", RED_FLAG, lang)
+        return Route("filter", RED_FLAG, lang or ui_lang)
     if len(text) > MAX_CHARS:
         return Route("filter", "filter.too_long", lang or ui_lang)
     if lang is None:
@@ -224,12 +224,45 @@ OTHER_PERIOD = re.compile(
     r"|\b\d+\W+(days?|weeks?|months?)\b", FLAGS)
 
 
+MONTH_STEMS = [  # (ru stem, en name) for months 1..12
+    ("январ", "january"), ("феврал", "february"), ("март", "march"), ("апрел", "april"), ("ма[йея]\\b", "may"),
+    ("июн", "june"), ("июл", "july"), ("август", "august"), ("сентябр", "september"), ("октябр", "october"),
+    ("ноябр", "november"), ("декабр", "december")]
+MONTH = re.compile(r"\b(?:" + "|".join(f"(?P<m{i}>{ru}\\w*|{en}\\b)" for i, (ru, en) in enumerate(MONTH_STEMS, 1))
+                   + r")(?:\s+(?P<year>20\d\d))?", FLAGS)
+# A month with these around it is a date, a range or a relative year: the model reads it.
+NOT_A_WHOLE_MONTH = re.compile(r"\d\s*$|\b(с|со|до|после|since|from|until|after|before|by)\s*$", FLAGS)
+
+
+def named_month(text: str, today: date) -> tuple[date, date, int, int] | None:
+    """(start, end, month, year) for one whole named month ("в октябре", "for September 2025"),
+    else None. A month later than this one is last year's; the current month ends today."""
+    found = list(MONTH.finditer(text))
+    if len(found) != 1:
+        return None
+    m = found[0]
+    rest = text[:m.start()] + " " + text[m.end():]
+    if NOT_A_WHOLE_MONTH.search(text[:m.start()]) or OTHER_PERIOD.search(rest) \
+            or any(re.search(p, rest, FLAGS) for p, _ in PERIODS) or re.search(r"прошл\w* год|last year", rest, FLAGS):
+        return None
+    month = next(i for i in range(1, 13) if m.group(f"m{i}"))
+    year = int(m.group("year")) if m.group("year") else today.year - (month > today.month)
+    start = date(year, month, 1)
+    if start > today:
+        return None
+    end = (date(year + month // 12, month % 12 + 1, 1) - timedelta(days=1))
+    return start, min(end, today), month, year
+
+
 def extract(intent: str, text: str, lang: str, today: date) -> dict | None:
     """Parameters for an intent, or None when they cannot be read (then the model answers)."""
     if intent == "calc.pace":
         return _pace_params(text)
     if intent == "calc.race_predict":
         return _race_params(text)
+    if intent == "fact.run_distance" and (nm := named_month(text, today)):
+        start, end, month, year = nm
+        return {"period": "month_name", "start": start, "end": end, "month": month, "year": year}
     if intent in ("fact.run_distance", "fact.metric") and OTHER_PERIOD.search(text):
         return None
     if intent == "fact.run_distance":

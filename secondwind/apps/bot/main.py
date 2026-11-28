@@ -1,3 +1,4 @@
+import asyncio
 import hmac
 import logging
 import os
@@ -11,6 +12,7 @@ from telegram.error import InvalidToken
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, MessageHandler, filters
 
 from secondwind.apps.bot import log_safety
+from secondwind.apps.bot.config import BotConfig
 from secondwind.apps.bot.handlers import COMMAND_HANDLERS, _clears_pending, cmd_start, on_button, on_text, setup_menu
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -31,12 +33,23 @@ tg = Application.builder().token(BOT_TOKEN).build()
 
 
 async def startup():
+    BotConfig.from_env(os.environ)   # a bad setting stops the start here, with the variable's name
     try:
         await tg.initialize()
     except InvalidToken:
         # python-telegram-bot puts the full token into this error; never let it reach the logs.
         logger.error("Telegram rejected the bot token: check the latest version of secret telegram_bot_token")
         raise RuntimeError("invalid Telegram bot token") from None
+    # The menu takes several Telegram calls; register it in the background so that the bot
+    # accepts messages right away (cold start).
+    _background.add(task := asyncio.create_task(_register_menu()))
+    task.add_done_callback(_background.discard)
+
+
+_background: set[asyncio.Task] = set()   # keeps background tasks referenced until they finish
+
+
+async def _register_menu():
     try:
         await setup_menu(tg.bot)
     except Exception as e:  # noqa: BLE001 - a menu failure must not take the bot down
@@ -55,7 +68,8 @@ tg.add_handler(CommandHandler("start", _clears_pending(cmd_start)))
 for name, handler in COMMAND_HANDLERS.items():
     tg.add_handler(CommandHandler(name, handler))
 tg.add_handler(CallbackQueryHandler(on_button, pattern=r"^(cmd|set|prof|goal|cmp|chart):"))
-tg.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
+# New messages only: an edit of an old message is not a new question.
+tg.add_handler(MessageHandler(filters.UpdateType.MESSAGE & filters.TEXT & ~filters.COMMAND, on_text))
 
 
 def _from_telegram(request: Request) -> bool:

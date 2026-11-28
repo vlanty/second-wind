@@ -8,15 +8,9 @@ validated slots (blue, orange: CVD ΔE 26.8 / normal ΔE 31.8 on #0f1f3a, both
 from __future__ import annotations
 
 import io
-from datetime import date, timedelta
+import threading
 
-import matplotlib
-
-matplotlib.use("Agg")
-import matplotlib.dates as mdates  # noqa: E402
-import matplotlib.pyplot as plt  # noqa: E402
-
-from secondwind.core.i18n import t  # noqa: E402
+from secondwind.core.i18n import t
 
 SURFACE = "#0f1f3a"
 TEXT = "#f0efec"
@@ -29,7 +23,17 @@ BAND = "#8a93a6"       # neutral, for ranges
 CHARTS = ("volume", "load", "hrv", "rhr", "efficiency")
 
 
+def _mpl():
+    """matplotlib is loaded on the first chart, not at bot start (cold start, architecture 10)."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.dates as mdates
+    import matplotlib.pyplot as plt
+    return plt, mdates
+
+
 def _fig(title: str, subtitle: str):
+    plt, _ = _mpl()
     fig, ax = plt.subplots(figsize=(8, 4.6), dpi=150)
     fig.patch.set_facecolor(SURFACE)
     ax.set_facecolor(SURFACE)
@@ -48,11 +52,12 @@ def _fig(title: str, subtitle: str):
 def _png(fig) -> bytes:
     buf = io.BytesIO()
     fig.savefig(buf, format="png", facecolor=SURFACE)
-    plt.close(fig)
+    _mpl()[0].close(fig)
     return buf.getvalue()
 
 
 def _dates_axis(ax):
+    _, mdates = _mpl()
     ax.xaxis.set_major_locator(mdates.AutoDateLocator(maxticks=7))
     ax.xaxis.set_major_formatter(mdates.DateFormatter("%d.%m"))
 
@@ -175,7 +180,15 @@ def efficiency(lang: str, rows: list[dict]) -> bytes:
     return _png(fig)
 
 
+_LOCK = threading.Lock()   # pyplot keeps global state: one chart at a time across threads
+
+
 def render(name: str, lang: str, bq) -> bytes:
+    with _LOCK:
+        return _render(name, lang, bq)
+
+
+def _render(name: str, lang: str, bq) -> bytes:
     if name == "volume":
         return volume(lang, bq.get_weekly_run_km(16))
     if name == "load":

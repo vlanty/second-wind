@@ -56,7 +56,7 @@ def observation(*, user_id: str, source: str, metric: str, method: str, value, u
         num = float(value)
         if unit != canonical:
             row["value_orig"], row["unit_orig"] = str(value), unit
-            num, unit = reg.to_canonical(num, unit, metric)
+            num, unit = reg.to_canonical(num, unit or "", metric)   # no unit: UnknownCode
         row["value_num"] = num
     elif vt == "text":
         row["value_text"] = str(value)

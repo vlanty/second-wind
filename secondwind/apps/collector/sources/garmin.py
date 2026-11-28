@@ -73,6 +73,7 @@ class GarminClient:
                 self._sleep(wait)
             self._last_call = time.monotonic()
             self.calls += 1
+            r: requests.Response | None
             try:
                 r = self.s.request(method, self.base_url + path, timeout=60, **kw)
             except (requests.ConnectionError, requests.Timeout) as e:
@@ -92,11 +93,11 @@ class GarminClient:
         raise GarminApiError(f"{method} {path.split('?')[0]}: {err} after {MAX_ATTEMPTS} attempts")
 
     def get(self, path: str, params: dict | None = None, accept: str = "application/json") -> requests.Response:
-        if self._token is None:
-            self._refresh_token()
         for _ in range(2):
+            if self._token is None:
+                self._refresh_token()
             r = self._send("GET", path, params=params,
-                           headers={"Accept": accept, "Authorization": "Bearer " + self._token})
+                           headers={"Accept": accept, "Authorization": f"Bearer {self._token}"})
             if r.status_code != 401:
                 return r
             self._refresh_token()  # token expired (24h) or revoked: get a new one once
@@ -226,9 +227,9 @@ CONVERT = {"int": lambda v: _int(v), "float": lambda v: _float(v), "ts": lambda 
            "str": lambda v: str(v) if v is not None else None}
 
 
-def build_health(day: str, parts: dict[str, dict]) -> dict | None:
+def build_health(day: str, parts: dict[str, dict | None]) -> dict | None:
     """One health_daily row from the per-endpoint records of a single day."""
-    row = {"source": "garmin", "date": day}
+    row: dict = {"source": "garmin", "date": day}
     for col, (endpoint, path, kind) in HEALTH_MAP.items():
         row[col] = CONVERT[kind](dig(parts.get(endpoint) or {}, path))
     if row["sleep_seconds"] == 0:  # Garmin reports 0 when no sleep was recorded

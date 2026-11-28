@@ -1,3 +1,5 @@
 -r bot.txt
 -r collector.txt
 pytest==8.3.4
+mypy==1.13.0
+types-PyYAML==6.0.12.20241230

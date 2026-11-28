@@ -321,5 +321,18 @@
   "filter.crisis": "I'm really sorry it is this hard right now. Please don't stay alone with it: call someone close to you, or 112 (or your local emergency number or crisis line) right now. I'm only a training assistant, but people there can help.",
   "filter.smalltalk": "🙂 I'm here for your training, sleep, recovery and nutrition — ask about those.",
   "filter.unclear": "I didn't get the question. Say what it is about — training, sleep, recovery or nutrition — and for which day or period.",
-  "filter.classifier_error": "I couldn't process the question just now. Please send it again in a minute; the /menu commands work as usual. If you feel unwell, don't wait for me: call 112."
+  "filter.classifier_error": "I couldn't process the question just now. Please send it again in a minute; the /menu commands work as usual. If you feel unwell, don't wait for me: call 112.",
+  "fast.period.month_name": "in {name}",
+  "month.in.1": "January",
+  "month.in.2": "February",
+  "month.in.3": "March",
+  "month.in.4": "April",
+  "month.in.5": "May",
+  "month.in.6": "June",
+  "month.in.7": "July",
+  "month.in.8": "August",
+  "month.in.9": "September",
+  "month.in.10": "October",
+  "month.in.11": "November",
+  "month.in.12": "December"
 }

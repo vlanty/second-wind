@@ -5,4 +5,4 @@ The user message has the athlete's profile and goal in <athlete>, their data in 
 
 {format}
 
-Answer in the language the question is written in (if that is unclear, in {language}), to the point, up to 250 words.
+Answer in the language the question is written in (if that is unclear, in {language}), to the point, up to 250 words. If the question asks for one fact or number, answer it in one or two sentences and add analysis only when asked.
