@@ -1,4 +1,7 @@
 import asyncio
+import threading
+from concurrent.futures import Future, ThreadPoolExecutor
+from typing import Any
 from collections.abc import Awaitable, Callable
 import logging
 import os
@@ -206,23 +209,30 @@ def _estimates(health, load, lang) -> str:
             + training_status(load, health, lang=lang).text(t(lang, "est.status")))
 
 
+CONTEXT_WORKERS = 9   # the context queries are independent: run them at the same time
+
+
 def _context(bq: DataReader) -> str:
     """Data block for Claude: what we have, plus explicit gaps. Always in English."""
     lang = CONTEXT_LANG
-    last = bq.get_last_activity()
-    acts = bq.get_week_activities()
-    prev = bq.get_week_activities(weeks_back=1)
-    health = bq.get_health_last_days(14)
-    loads = bq.get_load_last_days(1)
-    load = loads[-1] if loads else None
-    warn = stale_warnings(bq.get_source_status(), _enabled_sources(), lang)
     today = date.today()
     month_start = today.replace(day=1)
     prev_end = month_start - timedelta(days=1)
+    queries: dict[str, Callable[[], Any]] = {
+        "last": bq.get_last_activity, "acts": bq.get_week_activities,
+        "prev": lambda: bq.get_week_activities(weeks_back=1), "health": lambda: bq.get_health_last_days(14),
+        "loads": lambda: bq.get_load_last_days(1), "status": bq.get_source_status,
+        "month": lambda: bq.get_period(month_start, today),
+        "prev_month": lambda: bq.get_period(prev_end.replace(day=1), prev_end),
+        "records": lambda: bq.get_records(today - timedelta(days=365))}
+    with ThreadPoolExecutor(CONTEXT_WORKERS) as pool:
+        q: dict[str, Future[Any]] = {name: pool.submit(fn) for name, fn in queries.items()}
+    last, acts, prev, health, loads = (q[k].result() for k in ("last", "acts", "prev", "health", "loads"))
+    load = loads[-1] if loads else None
+    warn = stale_warnings(q["status"].result(), _enabled_sources(), lang)
     try:
-        month = analytics.month_note(bq.get_period(month_start, today), bq.get_period(prev_end.replace(day=1), prev_end),
-                                     today)
-        records = analytics.records_note(bq.get_records(today - timedelta(days=365)))
+        month = analytics.month_note(q["month"].result(), q["prev_month"].result(), today)
+        records = analytics.records_note(q["records"].result())
     except Exception as e:  # noqa: BLE001 - extra context must not block the answer
         logger.error("analytics context failed: %s", e)
         month = records = "unavailable"
@@ -266,7 +276,7 @@ def _message(update: Update) -> Message:
 
 
 async def _reply(update: Update, text: str, **kw):
-    await _message(update).reply_text(text, **kw)
+    return await _message(update).reply_text(text, **kw)
 
 
 # ---------- menu ----------
@@ -623,6 +633,46 @@ def _athlete(update: Update, user: dict) -> str:
                         garmin_resting_hr=inputs.get("resting_hr_7d"), lthr_then=lthr_then)
 
 
+EDIT_EVERY_S = 1.5         # Telegram allows about one edit per second in a chat
+PREVIEW_CHARS = 4000       # one Telegram message; the rest comes after the answer is complete
+CURSOR = " ▌"
+
+
+def _preview(text: str, ask: bool) -> str:
+    """What to show of a half-written answer: nothing until the scope line is complete, nothing at
+    all of an off-topic answer, plain text (Markdown may be unbalanced) cut to one message."""
+    if ask and "\n" not in text and len(text) < 40:
+        return ""
+    on_topic, body = split_scope(text) if ask else (None, text.strip())
+    if on_topic is False:
+        return ""
+    return body[:PREVIEW_CHARS] + ("…" if len(body) > PREVIEW_CHARS else "")
+
+
+async def _edit(msg, text: str, **kw) -> bool:
+    try:
+        await msg.edit_text(text, **kw)
+        return True
+    except BadRequest as e:
+        if "not modified" in str(e).lower():
+            return True
+        logger.warning("edit rejected by Telegram (%s)", e)
+        return False
+
+
+async def _finish(update: Update, placeholder, markdown: str):
+    """Replace the live message with the formatted answer; the rest goes in new messages."""
+    chunks = split_message(md_to_html(markdown))
+    if not await _edit(placeholder, chunks[0], parse_mode="HTML"):
+        await _edit(placeholder, html_to_plain(chunks[0]))
+    for chunk in chunks[1:]:
+        try:
+            await _reply(update, chunk, parse_mode="HTML")
+        except BadRequest as e:
+            logger.warning("HTML rejected by Telegram (%s), sending this part as plain text", e)
+            await _reply(update, html_to_plain(chunk))
+
+
 async def _ai_reply(update: Update, prompt: str, label: str, task: str, **fmt):
     user = await _io(_user, update)
     lang = _lang(update, user)
@@ -630,31 +680,60 @@ async def _ai_reply(update: Update, prompt: str, label: str, task: str, **fmt):
     if not budget_allowed(user.get("guard") or {}, datetime.now(timezone.utc), _daily_budget()):
         await _reply(update, t(lang, "filter.budget_spent"))
         return
-    athlete = await _io(_athlete, update, user)
-    await _reply(update, t(lang, "ai.working", label=t(lang, f"ai.label.{label}")))
+    athlete_job = asyncio.ensure_future(_io(_athlete, update, user))   # read alongside the data below
+    context_job = asyncio.ensure_future(_io(lambda: _context(_bq(update))))
+    placeholder = await _reply(update, t(lang, "ai.working", label=t(lang, f"ai.label.{label}")))
+    live = hasattr(placeholder, "edit_text")          # the answer grows in this message while it is written
+    ask = prompt is ASK_PROMPT
+    pieces: list[str] = []
+    lock = threading.Lock()
+
+    def on_text(piece: str):
+        with lock:
+            pieces.append(piece)
+
+    async def say(text: str, **kw):
+        if not (live and await _edit(placeholder, text, **kw)):
+            await _reply(update, text, **kw)
+
     try:
-        answer = await _io(lambda: analyze(_llm(), prompt, _context(_bq(update)), task, lang, mode=mode,
-                                           athlete=athlete, **fmt))
+        athlete, context = await athlete_job, await context_job
+        job = asyncio.ensure_future(_io(lambda: analyze(_llm(), prompt, context, task, lang, mode=mode,
+                                                        athlete=athlete, on_text=on_text if live else None,
+                                                        **fmt)))
+        shown = ""
+        while not job.done():
+            await asyncio.wait({job}, timeout=EDIT_EVERY_S)
+            if live and not job.done():
+                with lock:
+                    preview = _preview("".join(pieces), ask)
+                if preview and preview != shown:
+                    await _edit(placeholder, preview + CURSOR)
+                    shown = preview
+        answer = job.result()
         await _io(_record_usage, update, answer)
         text = answer.text
         if prompt is ASK_PROMPT:                         # second lock: the answer's own scope line
             on_topic, text = split_scope(text)
             if on_topic is False:
                 logger.info("scope line: off topic, fixed text shown")
-                await _reply(update, t(lang, "filter.off_topic"))
+                await say(t(lang, "filter.off_topic"))
                 return
             if on_topic is None:
                 logger.warning("scope line missing in the answer (model=%s)", answer.model)
         if not text:
-            await _reply(update, t(lang, "ai.error"))
+            await say(t(lang, "ai.error"))
             return
-        await _send_ai_text(update, text)
+        if live:
+            await _finish(update, placeholder, text)
+        else:
+            await _send_ai_text(update, text)
     except Refused as e:
         logger.warning("Claude refused: %s", e)
-        await _reply(update, t(lang, "ai.refused"))
+        await say(t(lang, "ai.refused"))
     except Exception as e:  # noqa: BLE001
         logger.error("Claude error: %s", e)
-        await _reply(update, t(lang, "ai.error"))
+        await say(t(lang, "ai.error"))
 
 
 async def cmd_coach(update: Update, ctx: ContextTypes.DEFAULT_TYPE | None):

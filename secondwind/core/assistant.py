@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -86,8 +87,12 @@ def build_request(prompt_template: str, data_summary: str, task: str, lang: str,
 
 
 def analyze(llm: LLM, prompt_template: str, data_summary: str, task: str, lang: str,
-            mode: str = DEFAULT_MODE, athlete: str | None = None, question: str | None = None) -> Answer:
-    r = llm.complete(build_request(prompt_template, data_summary, task, lang, mode, athlete, question))
+            mode: str = DEFAULT_MODE, athlete: str | None = None, question: str | None = None,
+            on_text: Callable[[str], None] | None = None) -> Answer:
+    """Ask the model; with on_text the answer is streamed (adapters without streaming answer at once)."""
+    req = build_request(prompt_template, data_summary, task, lang, mode, athlete, question)
+    stream = getattr(llm, "stream", None) if on_text else None
+    r = stream(req, on_text) if stream else llm.complete(req)
     if r.refused:
         raise Refused(r.refusal_details)
     if r.stop_reason == "max_tokens":

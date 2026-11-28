@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from typing import Any
 
 import anthropic
 
@@ -50,6 +51,26 @@ class ClaudeLLM:
         return self._client
 
     def complete(self, req: LLMRequest) -> LLMResponse:
+        model, params = self._params(req)
+        if supports_fallback(model):
+            response = self.client.beta.messages.create(betas=FALLBACK_BETAS, fallbacks="default", **params)
+        else:
+            response = self.client.messages.create(**params)
+        return _to_response(response)
+
+    def stream(self, req: LLMRequest, on_text) -> LLMResponse:
+        model, params = self._params(req)
+        ctx: Any
+        if supports_fallback(model):
+            ctx = self.client.beta.messages.stream(betas=FALLBACK_BETAS, fallbacks="default", **params)
+        else:
+            ctx = self.client.messages.stream(**params)
+        with ctx as s:
+            for text in s.text_stream:
+                on_text(text)
+            return _to_response(s.get_final_message())
+
+    def _params(self, req: LLMRequest) -> tuple[str, dict]:
         model = req.model or TIER_MODELS[req.tier]
         params: dict = dict(model=model, max_tokens=req.max_tokens, messages=req.messages)
         output_config: dict = {}
@@ -65,16 +86,17 @@ class ClaudeLLM:
             params["system"] = [{"type": "text", "text": b.text,
                                  **({"cache_control": {"type": "ephemeral"}} if b.cache else {})}
                                 for b in req.system]
-        if supports_fallback(model):
-            response = self.client.beta.messages.create(
-                betas=["server-side-fallback-2026-07-01"], fallbacks="default", **params)
-        else:
-            response = self.client.messages.create(**params)
+        return model, params
 
-        text = "\n".join(b.text for b in response.content if b.type == "text").strip()
-        u = response.usage
-        return LLMResponse(text=text, model=response.model, input_tokens=u.input_tokens,
-                           output_tokens=u.output_tokens,
-                           cost_usd=cost_usd(response.model, u.input_tokens, u.output_tokens),
-                           stop_reason=response.stop_reason, refused=response.stop_reason == "refusal",
-                           refusal_details=getattr(response, "stop_details", None))
+
+FALLBACK_BETAS = ["server-side-fallback-2026-07-01"]
+
+
+def _to_response(response) -> LLMResponse:
+    text = "\n".join(b.text for b in response.content if b.type == "text").strip()
+    u = response.usage
+    return LLMResponse(text=text, model=response.model, input_tokens=u.input_tokens,
+                       output_tokens=u.output_tokens,
+                       cost_usd=cost_usd(response.model, u.input_tokens, u.output_tokens),
+                       stop_reason=response.stop_reason, refused=response.stop_reason == "refusal",
+                       refusal_details=getattr(response, "stop_details", None))
