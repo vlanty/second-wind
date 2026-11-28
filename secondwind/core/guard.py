@@ -37,6 +37,20 @@ def forget_message(guard: dict) -> dict:
     return {**guard, "last_hash": None, "last_at": None}
 
 
+def _today(now: datetime) -> str:
+    return now.date().isoformat()
+
+
+def record_spend(guard: dict, now: datetime, usd: float) -> dict:
+    """Add AI spending to today's total (UTC day); a new day starts from zero."""
+    spent = guard.get("spent_usd", 0.0) if guard.get("spent_day") == _today(now) else 0.0
+    return {**guard, "spent_day": _today(now), "spent_usd": spent + (usd or 0.0)}
+
+
+def budget_allowed(guard: dict, now: datetime, limit_usd: float) -> bool:
+    return guard.get("spent_day") != _today(now) or guard.get("spent_usd", 0.0) < limit_usd
+
+
 def _recent(guard: dict, now: datetime) -> list[str]:
     return [c for c in guard.get("model_calls") or [] if now - _ts(c) < RATE_WINDOW]
 

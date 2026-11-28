@@ -13,9 +13,10 @@ from telegram.helpers import escape_markdown
 
 from secondwind.adapters.llm.claude import ClaudeLLM
 from secondwind.adapters.warehouse.bigquery_reader import BigQueryReader
-from secondwind.core.assistant import ASK_PROMPT, COACH_PROMPT, HEALTH_PROMPT, NUTRITION_PROMPT, Refused, analyze
+from secondwind.core.assistant import ASK_PROMPT, split_scope, COACH_PROMPT, HEALTH_PROMPT, NUTRITION_PROMPT, Refused, analyze
 from secondwind.core.freshness import stale_warnings
-from secondwind.core.guard import forget_message, is_repeat, model_allowed, record_message, record_model_call
+from secondwind.core.guard import (budget_allowed, forget_message, is_repeat, model_allowed, record_message,
+                                   record_model_call, record_spend)
 from secondwind.core.router import Route, is_red_flag, route as route_message
 from secondwind.core.scope import ERROR as SCOPE_ERROR, classify, scope_route
 from secondwind.core.ports import LLM, DataReader, StateStore
@@ -36,6 +37,13 @@ logger = logging.getLogger(__name__)
 SOURCE_LABEL = {"garmin": "Garmin", "strava": "Strava"}
 # Questions a user may send to the AI model per hour (filter, architecture 2.1).
 MODEL_CALLS_PER_HOUR = int(os.environ.get("MODEL_CALLS_PER_HOUR", "20"))
+
+
+def _daily_budget() -> float:
+    """AI spending per user per UTC day, USD (DAILY_BUDGET_USD, checked at startup)."""
+    return float(os.environ.get("DAILY_BUDGET_USD", "") or 1.0)
+
+
 CONTEXT_LANG = "en"  # data handed to Claude is formatted in English; Claude answers in the user's language
 
 # Commands in the Telegram "Menu" list, in display order. /start stays hidden (Telegram sends it itself).
@@ -593,6 +601,8 @@ async def _send_ai_text(update: Update, markdown: str):
 def _record_usage(update: Update, answer) -> None:
     try:
         _store().add_usage(_uid(update), _month(), answer.input_tokens, answer.output_tokens, answer.cost_usd)
+        guard = _store().get_user(_uid(update)).get("guard") or {}
+        _store().update_guard(_uid(update), record_spend(guard, datetime.now(timezone.utc), answer.cost_usd))
     except Exception as e:  # noqa: BLE001 - spending stats must never block the answer
         logger.error("usage write failed: %s", e)
 
@@ -617,16 +627,28 @@ async def _ai_reply(update: Update, prompt: str, label: str, task: str, **fmt):
     user = await _io(_user, update)
     lang = _lang(update, user)
     mode = (user.get("settings") or {}).get("mode", DEFAULT_MODE)
+    if not budget_allowed(user.get("guard") or {}, datetime.now(timezone.utc), _daily_budget()):
+        await _reply(update, t(lang, "filter.budget_spent"))
+        return
     athlete = await _io(_athlete, update, user)
     await _reply(update, t(lang, "ai.working", label=t(lang, f"ai.label.{label}")))
     try:
         answer = await _io(lambda: analyze(_llm(), prompt, _context(_bq(update)), task, lang, mode=mode,
                                            athlete=athlete, **fmt))
         await _io(_record_usage, update, answer)
-        if not answer.text:
+        text = answer.text
+        if prompt is ASK_PROMPT:                         # second lock: the answer's own scope line
+            on_topic, text = split_scope(text)
+            if on_topic is False:
+                logger.info("scope line: off topic, fixed text shown")
+                await _reply(update, t(lang, "filter.off_topic"))
+                return
+            if on_topic is None:
+                logger.warning("scope line missing in the answer (model=%s)", answer.model)
+        if not text:
             await _reply(update, t(lang, "ai.error"))
             return
-        await _send_ai_text(update, answer.text)
+        await _send_ai_text(update, text)
     except Refused as e:
         logger.warning("Claude refused: %s", e)
         await _reply(update, t(lang, "ai.refused"))
@@ -761,6 +783,8 @@ def _guarded_route(update: Update, user: dict, text: str, now: datetime) -> Rout
         r = Route("filter", "filter.repeat", r.lang)
     elif r.kind == "model" and not model_allowed(guard, now, MODEL_CALLS_PER_HOUR):
         r = Route("filter", "filter.rate_limited", r.lang)
+    elif r.kind == "model" and not budget_allowed(guard, now, _daily_budget()):
+        r = Route("filter", "filter.budget_spent", r.lang)
     new_guard = record_message(guard, text, now)
     if r.kind == "model":
         new_guard = record_model_call(new_guard, now)

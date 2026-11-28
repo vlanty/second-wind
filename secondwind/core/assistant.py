@@ -7,6 +7,7 @@ language is set per request.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -37,6 +38,23 @@ NUTRITION_PROMPT = load_prompt("nutrition")
 ASK_PROMPT = load_prompt("ask")
 
 
+# Output ceiling per task: answers are asked to stay within 250-400 words; thinking counts too.
+ANSWER_TOKENS = {"chat": 3000, "analysis": 4000}
+DEFAULT_ANSWER_TOKENS = 3000
+_SCOPE_LINE = re.compile(r"^\s*scope:\s*(yes|no)\b[^\n]*(\n|$)", re.IGNORECASE)
+
+
+def split_scope(text: str) -> tuple[bool | None, str]:
+    """The answer's first line `SCOPE: yes|no` (second lock, see ask.md) and the text without it.
+    None when the line is missing. Nothing after a "no" is ever shown."""
+    m = _SCOPE_LINE.match(text)
+    if not m:
+        return None, text.strip()
+    if m.group(1).lower() == "no":
+        return False, ""
+    return True, text[m.end():].strip()
+
+
 class Refused(Exception):
     """The model (and any fallback model) declined the request."""
 
@@ -63,7 +81,8 @@ def build_request(prompt_template: str, data_summary: str, task: str, lang: str,
                           [("athlete", athlete or GOAL_NOTE), ("data", data_summary)]
                           + ([("question", question)] if question else []))
     return LLMRequest(tier=tier_for(task, mode), model=model_override(task, mode), effort=effort_for(task),
-                      system=[Block(system)], messages=[{"role": "user", "content": content}], task=task)
+                      system=[Block(system)], messages=[{"role": "user", "content": content}], task=task,
+                      max_tokens=ANSWER_TOKENS.get(task, DEFAULT_ANSWER_TOKENS))
 
 
 def analyze(llm: LLM, prompt_template: str, data_summary: str, task: str, lang: str,

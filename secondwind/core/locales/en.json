@@ -334,5 +334,6 @@
   "month.in.9": "September",
   "month.in.10": "October",
   "month.in.11": "November",
-  "month.in.12": "December"
+  "month.in.12": "December",
+  "filter.budget_spent": "Today's AI spending limit is used up. The /menu commands work as usual; you can ask again tomorrow."
 }
