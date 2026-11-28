@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from secondwind.core.i18n import language_name
-from secondwind.core.models import DEFAULT_MODE, effort_for, model_override, tier_for
+from secondwind.core.models import DEFAULT_MODE, effort_for, model_override, more_tier, tier_for
 from secondwind.core.ports import LLM, Block, LLMRequest
 
 logger = logging.getLogger(__name__)
@@ -41,6 +41,10 @@ ASK_PROMPT = load_prompt("ask")
 
 # Output ceiling per task: answers are asked to stay within 250-400 words; thinking counts too.
 ANSWER_TOKENS = {"chat": 3000, "analysis": 4000}
+# Answers to questions are short; the "More" button asks for the detailed one.
+SHORT_ANSWER = "up to 120 words: the main point only; the athlete can ask for a detailed answer"
+DETAILED_ANSWER = "up to 400 words, in detail"
+DETAILED_TOKENS = 4000
 DEFAULT_ANSWER_TOKENS = 3000
 _SCOPE_LINE = re.compile(r"^\s*scope:\s*(yes|no)\b[^\n]*(\n|$)", re.IGNORECASE)
 
@@ -77,27 +81,34 @@ def _block(tag: str, text: str) -> str:
 
 def build_request(prompt_template: str, data_summary: str, task: str, lang: str,
                   mode: str = DEFAULT_MODE, athlete: str | None = None, question: str | None = None,
-                  dialog: str | None = None) -> LLMRequest:
-    system = prompt_template.format(language=language_name(lang), format=FORMAT_NOTE, persona=PERSONA)
-    content = "\n\n".join(_block(tag, text) for tag, text in
-                          [("athlete", athlete or GOAL_NOTE), ("data", data_summary)]
-                          + ([("dialog", dialog)] if dialog else [])
-                          + ([("question", question)] if question else []))
-    return LLMRequest(tier=tier_for(task, mode), model=model_override(task, mode), effort=effort_for(task),
+                  dialog: str | None = None, detail: bool = False) -> LLMRequest:
+    system = prompt_template.format(language=language_name(lang), format=FORMAT_NOTE, persona=PERSONA,
+                                    length=DETAILED_ANSWER if detail else SHORT_ANSWER)
+    stable = _block("athlete", athlete or GOAL_NOTE) + "\n\n" + _block("data", data_summary)
+    changing = "\n\n".join(_block(tag, text) for tag, text in
+                             ([("dialog", dialog)] if dialog else []) + ([("question", question)] if question else []))
+    content = stable + ("\n\n" + changing if changing else "")
+    # Profile and data change only with a new sync: for questions this part is cached for an hour.
+    # Commands are not: their prefix is not shared with anything, and the write costs double.
+    return LLMRequest(tier=more_tier(mode) if detail else tier_for(task, mode),
+                      model=None if detail else model_override(task, mode), effort=effort_for(task),
                       system=[Block(system)], messages=[{"role": "user", "content": content}], task=task,
-                      max_tokens=ANSWER_TOKENS.get(task, DEFAULT_ANSWER_TOKENS))
+                      max_tokens=DETAILED_TOKENS if detail else ANSWER_TOKENS.get(task, DEFAULT_ANSWER_TOKENS),
+                      cache_prefix=len(stable) + 2 if question and changing else 0)
 
 
 def analyze(llm: LLM, prompt_template: str, data_summary: str, task: str, lang: str,
             mode: str = DEFAULT_MODE, athlete: str | None = None, question: str | None = None,
-            on_text: Callable[[str], None] | None = None, dialog: str | None = None) -> Answer:
+            on_text: Callable[[str], None] | None = None, dialog: str | None = None,
+            detail: bool = False) -> Answer:
     """Ask the model; with on_text the answer is streamed (adapters without streaming answer at once)."""
-    req = build_request(prompt_template, data_summary, task, lang, mode, athlete, question, dialog)
+    req = build_request(prompt_template, data_summary, task, lang, mode, athlete, question, dialog, detail)
     stream = getattr(llm, "stream", None) if on_text else None
     r = stream(req, on_text) if stream else llm.complete(req)
     if r.refused:
         raise Refused(r.refusal_details)
     if r.stop_reason == "max_tokens":
         logger.warning("model answer cut by max_tokens (task=%s, model=%s)", task, r.model)
-    logger.info("llm task=%s model=%s in=%s out=%s", task, r.model, r.input_tokens, r.output_tokens)
+    logger.info("llm task=%s model=%s in=%s out=%s cache_read=%s cache_write=%s", task, r.model, r.input_tokens,
+                r.output_tokens, r.cache_read_tokens, r.cache_write_tokens)
     return Answer(r.text, r.model, r.input_tokens, r.output_tokens, r.cost_usd)

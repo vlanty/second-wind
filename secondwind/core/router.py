@@ -268,9 +268,13 @@ def extract(intent: str, text: str, lang: str, today: date) -> dict | None:
         return _pace_params(text)
     if intent == "calc.race_predict":
         return _race_params(text)
-    if intent == "fact.run_distance" and (nm := named_month(text, today)):
+    metric = next((code for pattern, code in METRICS if re.search(pattern, text, FLAGS)), None)
+    if intent in ("fact.run_distance", "fact.metric") and (nm := named_month(text, today)):
         start, end, month, year = nm
-        return {"period": "month_name", "start": start, "end": end, "month": month, "year": year}
+        p = {"period": "month_name", "start": start, "end": end, "month": month, "year": year}
+        if intent == "fact.run_distance":
+            return p
+        return {**p, "metric": metric, "stats": True} if metric and metric != "vo2max" else None
     if intent in ("fact.run_distance", "fact.metric") and OTHER_PERIOD.search(text):
         return None
     if intent == "fact.run_distance":
@@ -278,11 +282,13 @@ def extract(intent: str, text: str, lang: str, today: date) -> dict | None:
         start, end = period_dates(code, today)
         return {"period": code, "start": start, "end": end}
     if intent == "fact.metric":
-        metric = next((code for pattern, code in METRICS if re.search(pattern, text, FLAGS)), None)
         if not metric:
             return None
         code = _period(text, "today")
-        if code not in ("today", "yesterday", "day_before"):
-            return None                      # a value over a period is an analysis question
-        return {"metric": metric, "period": code, "date": period_dates(code, today)[0]}
+        if code in ("today", "yesterday", "day_before"):
+            return {"metric": metric, "period": code, "date": period_dates(code, today)[0]}
+        if metric == "vo2max":
+            return None
+        start, end = period_dates(code, today)   # over a period: average, lowest and highest
+        return {"metric": metric, "period": code, "start": start, "end": end, "stats": True}
     return {}

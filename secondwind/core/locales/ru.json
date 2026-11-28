@@ -335,5 +335,22 @@
   "month.in.10": "октябре",
   "month.in.11": "ноябре",
   "month.in.12": "декабре",
-  "filter.budget_spent": "На сегодня лимит расходов на ИИ исчерпан. Команды из /menu работают как обычно, вопросы снова можно задавать завтра."
+  "filter.budget_spent": "На сегодня лимит расходов на ИИ исчерпан. Команды из /menu работают как обычно, вопросы снова можно задавать завтра.",
+  "btn.more": "🔍 Подробнее",
+  "more.expired": "Этот вопрос уже устарел (история хранится сутки). Задай его снова.",
+  "ai.label.more": "подробно",
+  "fast.stats": "{name} {period} ({start}–{end}): в среднем <b>{avg}</b>{unit}, от {lo} до {hi} · дней с данными: {n}",
+  "fast.stats.none": "{name} {period} ({start}–{end}): данных нет.",
+  "stat.name.resting_hr": "❤️ Пульс покоя",
+  "stat.name.hrv": "💓 HRV",
+  "stat.name.sleep": "😴 Сон",
+  "stat.name.steps": "👣 Шаги",
+  "stat.name.stress": "🧘 Стресс",
+  "stat.name.body_battery": "🔋 Body Battery",
+  "stat.unit.resting_hr": " уд/мин",
+  "stat.unit.hrv": " мс",
+  "stat.unit.sleep": "",
+  "stat.unit.steps": "",
+  "stat.unit.stress": "",
+  "stat.unit.body_battery": ""
 }

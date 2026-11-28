@@ -335,5 +335,22 @@
   "month.in.10": "October",
   "month.in.11": "November",
   "month.in.12": "December",
-  "filter.budget_spent": "Today's AI spending limit is used up. The /menu commands work as usual; you can ask again tomorrow."
+  "filter.budget_spent": "Today's AI spending limit is used up. The /menu commands work as usual; you can ask again tomorrow.",
+  "btn.more": "🔍 More detail",
+  "more.expired": "That question has expired (the history is kept for a day). Ask it again.",
+  "ai.label.more": "in detail",
+  "fast.stats": "{name} {period} ({start}–{end}): average <b>{avg}</b>{unit}, from {lo} to {hi} · days with data: {n}",
+  "fast.stats.none": "{name} {period} ({start}–{end}): no data.",
+  "stat.name.resting_hr": "❤️ Resting HR",
+  "stat.name.hrv": "💓 HRV",
+  "stat.name.sleep": "😴 Sleep",
+  "stat.name.steps": "👣 Steps",
+  "stat.name.stress": "🧘 Stress",
+  "stat.name.body_battery": "🔋 Body Battery",
+  "stat.unit.resting_hr": " bpm",
+  "stat.unit.hrv": " ms",
+  "stat.unit.sleep": "",
+  "stat.unit.steps": "",
+  "stat.unit.stress": "",
+  "stat.unit.body_battery": ""
 }

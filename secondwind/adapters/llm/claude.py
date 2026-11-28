@@ -31,11 +31,18 @@ def supports_fallback(model: str) -> bool:
     return model.startswith(_FALLBACK_PREFIXES)
 
 
-def cost_usd(model: str, input_tokens: int, output_tokens: int) -> float:
+# Prompt cache, as multiples of the input price: reads per model, writes with the 1-hour TTL.
+CACHE_READ = {"claude-haiku-5-5": 0.10, "claude-sonnet-5-5": 0.05, "claude-opus-5-5": 0.05}
+CACHE_WRITE_1H = 2.0
+CACHE_TTL = "1h"
+
+
+def cost_usd(model: str, input_tokens: int, output_tokens: int, cache_read: int = 0, cache_write: int = 0) -> float:
     """List-price cost of one call; 0 for a model missing from PRICES (tokens are still counted)."""
     for name, (p_in, p_out) in PRICES.items():
         if model.startswith(name):
-            return (input_tokens * p_in + output_tokens * p_out) / 1_000_000
+            cached = cache_read * CACHE_READ.get(name, 0.1) + cache_write * CACHE_WRITE_1H
+            return ((input_tokens + cached) * p_in + output_tokens * p_out) / 1_000_000
     return 0.0
 
 
@@ -72,7 +79,7 @@ class ClaudeLLM:
 
     def _params(self, req: LLMRequest) -> tuple[str, dict]:
         model = req.model or TIER_MODELS[req.tier]
-        params: dict = dict(model=model, max_tokens=req.max_tokens, messages=req.messages)
+        params: dict = dict(model=model, max_tokens=req.max_tokens, messages=_messages(req))
         output_config: dict = {}
         if req.effort:
             output_config["effort"] = req.effort
@@ -92,11 +99,25 @@ class ClaudeLLM:
 FALLBACK_BETAS = ["server-side-fallback-2026-07-01"]
 
 
+def _messages(req: LLMRequest) -> list[dict]:
+    """The first user message split at cache_prefix, with a cache mark on the stable part."""
+    if not req.cache_prefix or not req.messages or not isinstance(req.messages[0].get("content"), str):
+        return req.messages
+    first, *rest = req.messages
+    text = first["content"]
+    blocks = [{"type": "text", "text": text[:req.cache_prefix], "cache_control": {"type": "ephemeral", "ttl": CACHE_TTL}}]
+    if text[req.cache_prefix:]:
+        blocks.append({"type": "text", "text": text[req.cache_prefix:]})
+    return [{**first, "content": blocks}, *rest]
+
+
 def _to_response(response) -> LLMResponse:
     text = "\n".join(b.text for b in response.content if b.type == "text").strip()
     u = response.usage
+    read = getattr(u, "cache_read_input_tokens", 0) or 0
+    write = getattr(u, "cache_creation_input_tokens", 0) or 0
     return LLMResponse(text=text, model=response.model, input_tokens=u.input_tokens,
-                       output_tokens=u.output_tokens,
-                       cost_usd=cost_usd(response.model, u.input_tokens, u.output_tokens),
+                       output_tokens=u.output_tokens, cache_read_tokens=read, cache_write_tokens=write,
+                       cost_usd=cost_usd(response.model, u.input_tokens, u.output_tokens, read, write),
                        stop_reason=response.stop_reason, refused=response.stop_reason == "refusal",
                        refusal_details=getattr(response, "stop_details", None))
