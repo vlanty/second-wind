@@ -223,3 +223,10 @@ def test_a_why_question_is_never_cut_down_to_a_bare_fact(label):
         assert scope.scope_route(scope.Verdict(label), text, "ru", date(2026, 11, 28)).kind == "model", text
     r = scope.scope_route(scope.Verdict("fact.metric"), "какой пульс покоя сегодня", "ru", date(2026, 11, 28))
     assert r.kind == "intent"
+
+
+@pytest.mark.parametrize("text", ["сколько я пробежал в октябре, это много?", "это мало для меня?",
+                                  "is the distance I ran this week a lot?", "did I sleep enough last night"])
+def test_how_much_judgements_are_analysis_too(text):
+    """2026-11-28 follow-up measurement: "это много или мало?" got a bare number."""
+    assert scope.scope_route(scope.Verdict("fact.run_distance"), text, "ru", date(2026, 11, 28)).kind == "model"

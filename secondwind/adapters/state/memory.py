@@ -16,7 +16,9 @@ class MemoryStore:
         return self.users.setdefault(user_id, {"profile": {}, "settings": {}})
 
     def get_user(self, user_id):
-        return copy.deepcopy(self.users.get(user_id, {}))
+        u = copy.deepcopy(self.users.get(user_id, {}))
+        u.pop("dialog", None)          # kept apart, like the Firestore subcollection
+        return u
 
     def update_profile(self, user_id, fields):
         prof = self._user(user_id)["profile"]
@@ -59,6 +61,15 @@ class MemoryStore:
 
     def update_guard(self, user_id, guard):
         self._user(user_id)["guard"] = copy.deepcopy(guard)
+
+    def add_dialog(self, user_id, entry):
+        from secondwind.core.dialog import KEEP
+        d = self._user(user_id).setdefault("dialog", [])
+        d.append(copy.deepcopy(entry))
+        del d[:-KEEP]
+
+    def get_dialog(self, user_id):
+        return copy.deepcopy(self.users.get(user_id, {}).get("dialog", []))
 
     def get_identity(self, key):
         return self.identities.get(key)

@@ -21,7 +21,8 @@ from secondwind.core.freshness import stale_warnings
 from secondwind.core.guard import (budget_allowed, forget_message, is_repeat, model_allowed, record_message,
                                    record_model_call, record_spend)
 from secondwind.core.router import Route, is_red_flag, route as route_message
-from secondwind.core.scope import ERROR as SCOPE_ERROR, classify, scope_route
+from secondwind.core import dialog
+from secondwind.core.scope import ERROR as SCOPE_ERROR, Verdict, check, scope_route
 from secondwind.core.ports import LLM, DataReader, StateStore
 from secondwind.core import analytics
 from secondwind.apps.bot import charts, tenancy
@@ -728,6 +729,8 @@ async def _ai_reply(update: Update, prompt: str, label: str, task: str, **fmt):
             await _finish(update, placeholder, text)
         else:
             await _send_ai_text(update, text)
+        if ask and fmt.get("question"):
+            await _io(_remember, update, fmt["question"], text)
     except Refused as e:
         logger.warning("Claude refused: %s", e)
         await say(t(lang, "ai.refused"))
@@ -774,16 +777,44 @@ async def on_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE | None):
         return
     question = text_in[:1000]
     r = await _io(_guarded_route, update, user, text_in, datetime.now(timezone.utc))
-    if await _reply_without_model(update, r, user):
+    if await _reply_without_model(update, r, user, question):
         return
+    history = await _io(_recent_dialog, update)
     # Nothing reaches the answering model unless the classifier recognized it as on topic.
-    r = await _io(_scope_check, update, question, r.lang)
-    if await _reply_without_model(update, r, user):
+    verdict = await _io(_scope_check, update, question, dialog.previous_questions(history))
+    if verdict.follow_up and verdict.question != question:
+        # "and yesterday?" -> "resting HR yesterday". The rewrite goes through the filter again
+        # (emergencies, instruction changes); facts come from the classifier's label, not from the
+        # rule intents, which would cut "and is that a lot?" down to a number.
+        question = verdict.question
+        r = route_message(question, r.lang, date.today())
+        if r.kind == "filter" and await _reply_without_model(update, r, user, question):
+            return
+    if await _reply_without_model(update, scope_route(verdict, question, r.lang), user, question):
         return
-    await _ai_reply(update, ASK_PROMPT, "ask", "chat", question=question)
+    await _ai_reply(update, ASK_PROMPT, "ask", "chat", question=question,
+                    dialog=dialog.block(history) if verdict.follow_up and history else None)
 
 
-async def _reply_without_model(update: Update, r: Route, user: dict) -> bool:
+REMEMBERED_FILTERS = ("filter.red_flag", "filter.emergency", "filter.crisis")   # the next answer must know
+
+
+def _recent_dialog(update: Update) -> list[dict]:
+    try:
+        return dialog.recent(_store().get_dialog(_uid(update)), datetime.now(timezone.utc))
+    except Exception as e:  # noqa: BLE001 - the history is a convenience
+        logger.error("dialog read failed: %s", e)
+        return []
+
+
+def _remember(update: Update, question: str, answer: str) -> None:
+    try:
+        _store().add_dialog(_uid(update), dialog.entry(question, html_to_plain(answer), datetime.now(timezone.utc)))
+    except Exception as e:  # noqa: BLE001
+        logger.error("dialog write failed: %s", e)
+
+
+async def _reply_without_model(update: Update, r: Route, user: dict, question: str | None = None) -> bool:
     if r.kind == "model":
         logger.info("route kind=model")
         return False
@@ -797,20 +828,22 @@ async def _reply_without_model(update: Update, r: Route, user: dict) -> bool:
         return False
     text, kw = answer
     await _reply(update, text, **kw)
+    if question and (r.kind == "intent" or r.key in REMEMBERED_FILTERS):
+        await _io(_remember, update, question, text)
     return True
 
 
-def _scope_check(update: Update, question: str, lang: str) -> Route:
-    verdict = classify(_llm(), question)
-    if verdict.response is not None:
-        _record_usage(update, verdict.response)
+def _scope_check(update: Update, question: str, previous: list[str]) -> Verdict:
+    verdict = check(_llm(), question, previous)
+    for response in verdict.responses:
+        _record_usage(update, response)
     if verdict.label == SCOPE_ERROR:
         try:
             guard = _store().get_user(_uid(update)).get("guard") or {}
             _store().update_guard(_uid(update), forget_message(guard))
         except Exception as e:  # noqa: BLE001
             logger.error("guard write failed: %s", e)
-    return scope_route(verdict, question, lang)
+    return verdict
 
 
 # ---------- answers without the AI model (filter and rule router) ----------

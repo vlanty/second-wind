@@ -1,6 +1,6 @@
 """Measure the scope gate (rules + classifier) on the labelled phrases with the real small model.
 
-    ANTHROPIC_API_KEY=... python scripts/eval_scope.py [dev|test|heldout]
+    ANTHROPIC_API_KEY=... python scripts/eval_scope.py [dev|test|heldout|followup-dev|followup-test]
 
 Costs about 2.5 cents per run (dev or test). `test` and `heldout` are for the final measurement only: tune the
 prompt on `dev`.
@@ -18,7 +18,7 @@ import yaml
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from secondwind.adapters.llm.claude import ClaudeLLM  # noqa: E402
 from secondwind.core.router import route  # noqa: E402
-from secondwind.core.scope import classify, scope_route  # noqa: E402
+from secondwind.core.scope import check, classify, scope_route  # noqa: E402
 
 GOLDEN = Path(__file__).resolve().parent.parent / "secondwind" / "contracts" / "golden"
 HELDOUT = {"filter.red_flag": "emergency", "filter.injection": "injection", "pass": "allow"}
@@ -64,8 +64,47 @@ def ok_label(expect, label):
     return not blocked if expect == "allow" else label not in ("training", "health", "sleep", "nutrition")
 
 
+EMERGENCY_KEYS = {"filter.red_flag", "filter.emergency", "filter.crisis"}
+BLOCK_KEYS = {"filter.off_topic", "filter.injection"}
+
+
+def run_followup(llm, prev, text):
+    """The bot's path for a message with a previous question: rules, classifier, rules on the rewrite."""
+    r = route(text, "ru")
+    if r.kind != "model":
+        return r.key, "-", None
+    v = check(llm, text, [] if prev == "none" else [prev])
+    question = text
+    if v.follow_up and v.question != text:
+        question = v.question
+        r = route(question, r.lang)
+        if r.kind == "filter":
+            return r.key, v.label, question
+    return scope_route(v, question, r.lang).key, v.label, question
+
+
+def same(expect, got):
+    return (expect == got or (expect in EMERGENCY_KEYS and got in EMERGENCY_KEYS)
+            or (expect in BLOCK_KEYS and got in BLOCK_KEYS))
+
+
+def followup(which):
+    cases = [c for c in yaml.safe_load((GOLDEN / "followup.yaml").read_text(encoding="utf-8"))["cases"]
+             if c["set"] == which]
+    llm = ClaudeLLM()
+    with ThreadPoolExecutor(4) as pool:
+        results = list(pool.map(lambda c: run_followup(llm, c["prev"], c["text"]), cases))
+    good = sum(same(c["expect"], r[0]) for c, r in zip(cases, results))
+    print(f"== followup-{which}: {good}/{len(cases)} routed as expected")
+    for c, (key, label, q) in zip(cases, results):
+        if not same(c["expect"], key):
+            print(f"  MISS {c['expect']:18} -> {key:18} (label {label}, question {q!r})  prev={c['prev']!r} text={c['text']!r}")
+
+
 def main():
     which = sys.argv[1] if len(sys.argv) > 1 else "dev"
+    if which.startswith("followup-"):
+        return followup(which.split("-", 1)[1])
     cases, llm = load(which), ClaudeLLM()
     with ThreadPoolExecutor(4) as pool:
         results = list(pool.map(lambda c: run(llm, c[0]), cases))

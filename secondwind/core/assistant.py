@@ -76,10 +76,12 @@ def _block(tag: str, text: str) -> str:
 
 
 def build_request(prompt_template: str, data_summary: str, task: str, lang: str,
-                  mode: str = DEFAULT_MODE, athlete: str | None = None, question: str | None = None) -> LLMRequest:
+                  mode: str = DEFAULT_MODE, athlete: str | None = None, question: str | None = None,
+                  dialog: str | None = None) -> LLMRequest:
     system = prompt_template.format(language=language_name(lang), format=FORMAT_NOTE, persona=PERSONA)
     content = "\n\n".join(_block(tag, text) for tag, text in
                           [("athlete", athlete or GOAL_NOTE), ("data", data_summary)]
+                          + ([("dialog", dialog)] if dialog else [])
                           + ([("question", question)] if question else []))
     return LLMRequest(tier=tier_for(task, mode), model=model_override(task, mode), effort=effort_for(task),
                       system=[Block(system)], messages=[{"role": "user", "content": content}], task=task,
@@ -88,9 +90,9 @@ def build_request(prompt_template: str, data_summary: str, task: str, lang: str,
 
 def analyze(llm: LLM, prompt_template: str, data_summary: str, task: str, lang: str,
             mode: str = DEFAULT_MODE, athlete: str | None = None, question: str | None = None,
-            on_text: Callable[[str], None] | None = None) -> Answer:
+            on_text: Callable[[str], None] | None = None, dialog: str | None = None) -> Answer:
     """Ask the model; with on_text the answer is streamed (adapters without streaming answer at once)."""
-    req = build_request(prompt_template, data_summary, task, lang, mode, athlete, question)
+    req = build_request(prompt_template, data_summary, task, lang, mode, athlete, question, dialog)
     stream = getattr(llm, "stream", None) if on_text else None
     r = stream(req, on_text) if stream else llm.complete(req)
     if r.refused:

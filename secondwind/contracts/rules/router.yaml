@@ -4,8 +4,8 @@
 # here too, so that a fact rule never answers a message that may be an emergency. Parameters (period, metric, numbers) are extracted in
 # code (secondwind/core/router.py). Order matters: the first matching intent wins.
 to_model:
-  ru: ['почему|зачем|из-за чего|как (улучшить|поднять|снизить|исправить|восстановиться)|что (делать|посоветуешь)|нормальн\w*|стоит ли|можно ли|надо ли|нужно ли|план|совет|оцени|проанализируй|сравни|нужен|нужна|\b(болит|болят|боль|боли|болело)\b|травм|устал|тяжел|плохо|\bгруд|\bсердц|\bсердеч|дыш|дыха|воздух|одышк|сознан|голов[аыуе]?\b|кружит|тошн|рвот|кров|неме|онем|отек|опух|\bно(ет|ют|ло)\b|температур|озноб|слабост|моч[аиуе]\b|глаза']
-  en: ["why|how (do|can|should) i (improve|raise|lower|fix|recover)|what should|normal|is it ok|should i|can i|plan|advice|analy[sz]e|compare|evaluate|\\bneed\\b|\\b(hurts?|pain|sore|injur\\w*|tired|terrible|awful|bad|chest|breath\\w*|faint\\w*|dizz\\w*|headaches?|vision|blurr\\w*|blood|numb\\w*|swollen|swelling|vomit\\w*|nause\\w*|fever|weakness|confus\\w*|collaps\\w*)\\b"]
+  ru: ['почему|зачем|из-за чего|как (улучшить|поднять|снизить|исправить|восстановиться)|что (делать|посоветуешь)|нормальн\w*|стоит ли|можно ли|надо ли|нужно ли|план|совет|оцени|проанализируй|сравни|нужен|нужна|\b(болит|болят|боль|боли|болело)\b|травм|устал|тяжел|плохо|\bгруд|\bсердц|\bсердеч|дыш|дыха|воздух|одышк|сознан|голов[аыуе]?\b|кружит|тошн|рвот|кров|неме|онем|отек|опух|\bно(ет|ют|ло)\b|температур|озноб|слабост|моч[аиуе]\b|глаза|\bмного\b|\bмало\b|достаточно|слишком']
+  en: ["why|how (do|can|should) i (improve|raise|lower|fix|recover)|what should|normal|is it ok|should i|can i|plan|advice|analy[sz]e|compare|evaluate|\\bneed\\b|\\b(hurts?|pain|sore|injur\\w*|tired|terrible|awful|bad|chest|breath\\w*|faint\\w*|dizz\\w*|headaches?|vision|blurr\\w*|blood|numb\\w*|swollen|swelling|vomit\\w*|nause\\w*|fever|weakness|confus\\w*|collaps\\w*|a lot|enough|too (much|little|many|few))\\b"]
 intents:
   - intent: calc.race_predict
     ru: ['прогноз\w*\W+(\w+\W+){0,3}(\d+([.,]\d+)?\s*(км|k)\b|марафон|полумарафон)', 'за сколько\W+(\w+\W+){0,2}(пробегу|пробежал бы|осилю)', 'на (какое время|что)\W+(\w+\W+){0,2}бегу']
