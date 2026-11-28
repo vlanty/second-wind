@@ -315,5 +315,11 @@
   "filter.repeat": "I already got this one — the answer is above 🙂",
   "filter.rate_limited": "The hourly limit of AI questions is used up. Commands in /menu work as usual; you can ask again in an hour.",
   "fast.race.result": "🏁 Prediction for {target} km: <b>{time}</b> (pace {pace}/km)\nRiegel formula from your best {src} km in 12 months: {src_time} ({src_date}). An estimate, not a promise: over long distances volume and fuelling decide.",
-  "fast.race.no_data": "A prediction needs your best running efforts from the last 12 months, and there are none yet."
+  "fast.race.no_data": "A prediction needs your best running efforts from the last 12 months, and there are none yet.",
+  "filter.refused": "I can't answer that question.",
+  "filter.emergency": "⚠️ This may be dangerous. Stop exercising, don't stay alone and call 112 (or your local emergency number) or a doctor now. I'm not a doctor and can't judge this from watch data.",
+  "filter.crisis": "I'm really sorry it is this hard right now. Please don't stay alone with it: call someone close to you, or 112 (or your local emergency number or crisis line) right now. I'm only a training assistant, but people there can help.",
+  "filter.smalltalk": "🙂 I'm here for your training, sleep, recovery and nutrition — ask about those.",
+  "filter.unclear": "I didn't get the question. Say what it is about — training, sleep, recovery or nutrition — and for which day or period.",
+  "filter.classifier_error": "I couldn't process the question just now. Please send it again in a minute; the /menu commands work as usual. If you feel unwell, don't wait for me: call 112."
 }

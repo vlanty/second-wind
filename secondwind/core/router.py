@@ -214,12 +214,24 @@ def _race_params(text: str) -> dict | None:
     return None
 
 
+# A period these rules cannot read (a month, a weekday, a date, "since ..."): the model answers.
+OTHER_PERIOD = re.compile(
+    r"\b(январ|феврал|март[ае]?\b|апрел|ма[йея]\b|июн|июл|август|сентябр|октябр|ноябр|декабр)\w*"
+    r"|\b(понедельник|вторник|сред[ау]\b|четверг|пятниц|суббот|воскресень)\w*|\b(лет[оа]|летом|осен\w*|зим\w*|весн\w*)\b"
+    r"|\bс начала\b|\b\d+\W+(дн|день|недел|месяц)\w*|\b\d{1,2}\.\d{1,2}\b"
+    r"|\b(january|february|march|april|may|june|july|august|september|october|november|december)\b"
+    r"|\b(mon|tues|wednes|thurs|fri|satur|sun)days?\b|\b(summer|autumn|fall|winter|spring)\b|\bsince\b"
+    r"|\b\d+\W+(days?|weeks?|months?)\b", FLAGS)
+
+
 def extract(intent: str, text: str, lang: str, today: date) -> dict | None:
     """Parameters for an intent, or None when they cannot be read (then the model answers)."""
     if intent == "calc.pace":
         return _pace_params(text)
     if intent == "calc.race_predict":
         return _race_params(text)
+    if intent in ("fact.run_distance", "fact.metric") and OTHER_PERIOD.search(text):
+        return None
     if intent == "fact.run_distance":
         code = _period(text, "week")
         start, end = period_dates(code, today)

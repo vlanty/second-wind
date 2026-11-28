@@ -1,4 +1,4 @@
-"""Model choice and the request sent to the model must stay as they were before the move to tiers."""
+"""Model choice and the request sent to the model."""
 
 import types
 
@@ -52,8 +52,9 @@ def test_request_body_and_answer(monkeypatch):
     assert body["model"] == S and body["max_tokens"] == 16000 and body["output_config"] == {"effort": "low"}
     assert body["fallbacks"] == "default" and body["betas"] == ["server-side-fallback-2026-07-01"]
     (msg,) = body["messages"]
-    assert msg["role"] == "user" and "Question: как я?" in msg["content"] and "DATA" in msg["content"]
-    assert "in Russian" in msg["content"] and a.GOAL_NOTE in msg["content"] and "system" not in body
+    assert msg["role"] == "user" and "как я?" in msg["content"] and "DATA" in msg["content"]
+    (system,) = body["system"]
+    assert "in Russian" in system["text"] and a.GOAL_NOTE in msg["content"] and "timeout" not in body
     assert ans.text == "ok" and ans.input_tokens == 1000 and ans.cost_usd == pytest.approx(0.003)
 
 
@@ -64,12 +65,22 @@ def test_haiku_has_no_fallback_and_refusal_raises():
     assert client.calls[0]["model"] == H and "fallbacks" not in client.calls[0]
 
 
+def test_classifier_request_body(monkeypatch):
+    from secondwind.core import scope
+    monkeypatch.delenv("MODEL_CLASSIFY", raising=False)
+    client = FakeClient(model=H)
+    scope.classify(ClaudeLLM(client=client), "hi")
+    (body,) = client.calls
+    assert body["model"] == H and body["timeout"] == scope.TIMEOUT_S and "fallbacks" not in body
+    assert body["output_config"] == {"effort": "low", "format": {"type": "json_schema", "schema": scope.SCHEMA}}
+
+
 def test_prompt_files_use_only_known_fields():
     import string
-    allowed = {"persona", "goal", "data", "format", "language", "question"}
+    allowed = {"persona", "format", "language"}
     for name in ("coach", "health", "nutrition", "ask"):
-        fields = {f for _, f, _, _ in string.Formatter().parse(a._prompt(name)) if f}
-        assert fields <= allowed and {"persona", "data", "format", "language"} <= fields, name
+        fields = {f for _, f, _, _ in string.Formatter().parse(a.load_prompt(name)) if f}
+        assert fields == allowed, name
     assert "Vita" in a.PERSONA and not a.PERSONA.endswith("\n")
 
 

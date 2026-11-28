@@ -12,28 +12,29 @@ from pathlib import Path
 
 from secondwind.core.i18n import language_name
 from secondwind.core.models import DEFAULT_MODE, effort_for, model_override, tier_for
-from secondwind.core.ports import LLM, LLMRequest
+from secondwind.core.ports import LLM, Block, LLMRequest
 
 logger = logging.getLogger(__name__)
 
 PROMPTS_DIR = Path(__file__).parent / "prompts"
 
 
-def _prompt(name: str) -> str:
+def load_prompt(name: str) -> str:
     """A prompt file from core/prompts/ (the trailing newline of the file is not part of it)."""
     return (PROMPTS_DIR / f"{name}.md").read_text(encoding="utf-8").removesuffix("\n")
 
 
-# Templates use str.format fields: {persona} {goal} {data} {format} {language} (+ {question} in ask).
+# The templates are the system prompt; they use str.format fields {persona} {format} {language}.
+# Content (athlete note, data, question) goes into tagged blocks of the user message.
 # The answer is shown in Telegram: format.md asks for the Markdown subset we convert to Telegram HTML.
-FORMAT_NOTE = _prompt("format")
+FORMAT_NOTE = load_prompt("format")
 # The bot's persona. The project is "Second Wind"; the bot introduces itself as Vita.
-PERSONA = _prompt("persona")
-GOAL_NOTE = _prompt("no_goal")  # used when no athlete note is given
-COACH_PROMPT = _prompt("coach")
-HEALTH_PROMPT = _prompt("health")
-NUTRITION_PROMPT = _prompt("nutrition")
-ASK_PROMPT = _prompt("ask")
+PERSONA = load_prompt("persona")
+GOAL_NOTE = load_prompt("no_goal")  # used when no athlete note is given
+COACH_PROMPT = load_prompt("coach")
+HEALTH_PROMPT = load_prompt("health")
+NUTRITION_PROMPT = load_prompt("nutrition")
+ASK_PROMPT = load_prompt("ask")
 
 
 class Refused(Exception):
@@ -49,17 +50,25 @@ class Answer:
     cost_usd: float
 
 
+def _block(tag: str, text: str) -> str:
+    """Content in a tagged block. Angle brackets are replaced so that the text (a question, an
+    activity name) cannot close the block and pose as something else."""
+    return f"<{tag}>\n{text.replace('<', '‹').replace('>', '›')}\n</{tag}>"
+
+
 def build_request(prompt_template: str, data_summary: str, task: str, lang: str,
-                  mode: str = DEFAULT_MODE, athlete: str | None = None, **fmt) -> LLMRequest:
-    content = prompt_template.format(data=data_summary, language=language_name(lang), goal=athlete or GOAL_NOTE,
-                                     format=FORMAT_NOTE, persona=PERSONA, **fmt)
+                  mode: str = DEFAULT_MODE, athlete: str | None = None, question: str | None = None) -> LLMRequest:
+    system = prompt_template.format(language=language_name(lang), format=FORMAT_NOTE, persona=PERSONA)
+    content = "\n\n".join(_block(tag, text) for tag, text in
+                          [("athlete", athlete or GOAL_NOTE), ("data", data_summary)]
+                          + ([("question", question)] if question else []))
     return LLMRequest(tier=tier_for(task, mode), model=model_override(task, mode), effort=effort_for(task),
-                      messages=[{"role": "user", "content": content}], task=task)
+                      system=[Block(system)], messages=[{"role": "user", "content": content}], task=task)
 
 
 def analyze(llm: LLM, prompt_template: str, data_summary: str, task: str, lang: str,
-            mode: str = DEFAULT_MODE, athlete: str | None = None, **fmt) -> Answer:
-    r = llm.complete(build_request(prompt_template, data_summary, task, lang, mode, athlete, **fmt))
+            mode: str = DEFAULT_MODE, athlete: str | None = None, question: str | None = None) -> Answer:
+    r = llm.complete(build_request(prompt_template, data_summary, task, lang, mode, athlete, question))
     if r.refused:
         raise Refused(r.refusal_details)
     if r.stop_reason == "max_tokens":
